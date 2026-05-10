@@ -1,0 +1,179 @@
+import { useEffect, useState } from "react";
+import { Plus, Pencil, Trash2, Users } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { TeacherForm } from "@/components/teachers/teacher-form";
+import { useTeacherStore } from "@/stores/teacher-store";
+import { useSubjectStore } from "@/stores/subject-store";
+import { useClassStore } from "@/stores/class-store";
+import { useToast } from "@/hooks/use-toast";
+import { WEEKDAYS } from "@/types";
+import type { Teacher } from "@/types";
+
+export function TeachersPage() {
+  const { teachers, loading, fetch, create, update, remove } = useTeacherStore();
+  const { subjects, fetch: fetchSubjects } = useSubjectStore();
+  const { classes, fetch: fetchClasses } = useClassStore();
+  const { toast } = useToast();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<Teacher | undefined>();
+
+  useEffect(() => {
+    fetch();
+    fetchSubjects();
+    fetchClasses();
+  }, [fetch, fetchSubjects, fetchClasses]);
+
+  const handleCreate = async (data: Parameters<typeof create>[0]) => {
+    try {
+      await create(data);
+      toast({ title: "Lehrer erstellt" });
+    } catch (err) {
+      toast({ variant: "destructive", title: "Fehler beim Erstellen", description: String(err) });
+      throw err;
+    }
+  };
+
+  const handleUpdate = async (data: Parameters<typeof create>[0]) => {
+    if (!editing) return;
+    try {
+      await update(editing.id, data);
+      toast({ title: "Lehrer aktualisiert" });
+      setEditing(undefined);
+    } catch (err) {
+      toast({ variant: "destructive", title: "Fehler beim Speichern", description: String(err) });
+      throw err;
+    }
+  };
+
+  const handleDelete = async (teacher: Teacher) => {
+    if (!confirm(`Lehrer "${teacher.first_name} ${teacher.last_name}" wirklich löschen?`)) return;
+    try {
+      await remove(teacher.id);
+      toast({ title: "Lehrer gelöscht" });
+    } catch (err) {
+      toast({ variant: "destructive", title: "Fehler beim Löschen", description: String(err) });
+    }
+  };
+
+  const openEdit = (teacher: Teacher) => {
+    setEditing(teacher);
+    setDialogOpen(true);
+  };
+
+  const closeDialog = () => {
+    setDialogOpen(false);
+    setEditing(undefined);
+  };
+
+  const getSubjectNames = (ids: number[]) =>
+    ids.map((id) => subjects.find((s) => s.id === id)?.name).filter(Boolean);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Lehrer</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Lehrkräfte konfigurieren und verwalten
+          </p>
+        </div>
+        <Button onClick={() => setDialogOpen(true)}>
+          <Plus className="h-4 w-4" />
+          Neuer Lehrer
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
+          Laden...
+        </div>
+      ) : teachers.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-48 gap-3 text-gray-400 border border-gray-200 rounded-lg bg-white">
+          <Users className="h-8 w-8 opacity-30" />
+          <p className="text-sm">Noch keine Lehrer angelegt</p>
+          <Button variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Ersten Lehrer anlegen
+          </Button>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-gray-200 overflow-hidden bg-white shadow-sm">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="text-left p-3 font-medium">Name</th>
+                <th className="text-left p-3 font-medium">Kürzel</th>
+                <th className="text-left p-3 font-medium">Std/Wo</th>
+                <th className="text-left p-3 font-medium">Kernfächer</th>
+                <th className="text-left p-3 font-medium">Freier Tag</th>
+                <th className="text-left p-3 font-medium">Klasse</th>
+                <th className="p-3 w-24"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {teachers.map((teacher) => (
+                <tr key={teacher.id} className="border-t hover:bg-blue-50/60 transition-colors cursor-default">
+                  <td className="p-3 font-medium">
+                    {teacher.last_name}, {teacher.first_name}
+                    {teacher.is_class_teacher && (
+                      <Badge variant="outline" className="ml-2 text-xs">KL</Badge>
+                    )}
+                  </td>
+                  <td className="p-3">
+                    <Badge variant="secondary">{teacher.abbreviation}</Badge>
+                  </td>
+                  <td className="p-3 text-muted-foreground">{teacher.hours_per_week}</td>
+                  <td className="p-3">
+                    <div className="flex gap-1 flex-wrap">
+                      {getSubjectNames(teacher.core_subject_ids).slice(0, 3).map((name) => (
+                        <Badge key={name} variant="default" className="text-xs">
+                          {name}
+                        </Badge>
+                      ))}
+                      {teacher.core_subject_ids.length > 3 && (
+                        <Badge variant="outline" className="text-xs">
+                          +{teacher.core_subject_ids.length - 3}
+                        </Badge>
+                      )}
+                    </div>
+                  </td>
+                  <td className="p-3 text-muted-foreground">
+                    {teacher.has_free_day
+                      ? teacher.free_days
+                          .map((d) => WEEKDAYS.find((w) => w.value === d)?.short)
+                          .join(", ") || "Ja"
+                      : "Nein"}
+                  </td>
+                  <td className="p-3 text-muted-foreground">
+                    {teacher.own_class_name ?? "–"}
+                  </td>
+                  <td className="p-3">
+                    <div className="flex gap-1 justify-end">
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(teacher)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(teacher)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <TeacherForm
+        key={editing?.id ?? "new"}
+        open={dialogOpen}
+        onClose={closeDialog}
+        onSubmit={editing ? handleUpdate : handleCreate}
+        initial={editing}
+        subjects={subjects}
+        classes={classes}
+      />
+    </div>
+  );
+}
