@@ -4,18 +4,21 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ClassForm } from "@/components/classes/class-form";
 import { useClassStore } from "@/stores/class-store";
+import { useTeacherStore } from "@/stores/teacher-store";
 import { useToast } from "@/hooks/use-toast";
 import type { SchoolClass } from "@/types";
 
 export function ClassesPage() {
   const { classes, loading, fetch, create, update, remove } = useClassStore();
+  const { teachers, fetch: fetchTeachers } = useTeacherStore();
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<SchoolClass | undefined>();
 
   useEffect(() => {
     fetch();
-  }, [fetch]);
+    fetchTeachers();
+  }, [fetch, fetchTeachers]);
 
   const handleCreate = async (data: Parameters<typeof create>[0]) => {
     try {
@@ -93,6 +96,7 @@ export function ClassesPage() {
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="text-left p-3 font-medium">Klasse</th>
+                <th className="text-left p-3 font-medium">Klassenleitung</th>
                 <th className="text-left p-3 font-medium">Stufe</th>
                 <th className="text-left p-3 font-medium">Freistunden</th>
                 <th className="p-3 w-24"></th>
@@ -102,6 +106,12 @@ export function ClassesPage() {
               {classes.map((cls) => (
                 <tr key={cls.id} className="border-t hover:bg-blue-50/60 transition-colors cursor-default">
                   <td className="p-3 font-medium">{cls.name}</td>
+                  <td className="p-3 text-muted-foreground">
+                    {(() => {
+                      const t = teachers.find((t) => t.own_class_id === cls.id);
+                      return t ? `${t.last_name}, ${t.first_name}` : "–";
+                    })()}
+                  </td>
                   <td className="p-3">
                     <Badge variant="secondary">Klasse {cls.grade_level}</Badge>
                   </td>
