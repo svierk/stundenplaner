@@ -100,7 +100,7 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
       await onSubmit({
         first_name: firstName.trim(),
         last_name: lastName.trim(),
-        abbreviation: abbreviation.trim().toUpperCase(),
+        abbreviation: abbreviation.trim(),
         hours_per_week: hoursPerWeek,
         is_class_teacher: isClassTeacher,
         has_free_day: hasFreeDay,
@@ -148,7 +148,7 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
               <Label>Kürzel</Label>
               <Input
                 value={abbreviation}
-                onChange={(e) => setAbbreviation(e.target.value.toUpperCase())}
+                onChange={(e) => setAbbreviation(e.target.value)}
                 placeholder="MUS"
                 maxLength={5}
               />
