@@ -116,9 +116,7 @@ export function SubjectsPage() {
                   </td>
                   <td className="p-3 text-muted-foreground">
                     {subject.grade_configs.length > 0
-                      ? subject.grade_configs
-                          .map((gc) => `${gc.min_hours_per_week}–${gc.max_hours_per_week}`)
-                          .join(", ")
+                      ? subject.grade_configs.map((gc) => `${gc.hours_per_week}`).join(", ")
                       : "–"}
                   </td>
                   <td className="p-3 text-muted-foreground">

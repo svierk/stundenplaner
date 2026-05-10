@@ -19,8 +19,7 @@ export interface SubjectGradeConfig {
   id?: number;
   subject_id: number;
   grade_level: GradeLevel;
-  min_hours_per_week: number;
-  max_hours_per_week: number;
+  hours_per_week: number;
 }
 
 export interface Subject {
@@ -34,7 +33,7 @@ export interface Subject {
 
 export interface SubjectFormData {
   name: string;
-  grade_configs: { grade_level: GradeLevel; min_hours_per_week: number; max_hours_per_week: number }[];
+  grade_configs: { grade_level: GradeLevel; hours_per_week: number }[];
   allowed_days: Weekday[];
   allowed_slots: number[];
 }

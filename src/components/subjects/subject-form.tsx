@@ -22,8 +22,7 @@ interface SubjectFormProps {
 
 const defaultGradeConfig = (grade: GradeLevel) => ({
   grade_level: grade,
-  min_hours_per_week: 0,
-  max_hours_per_week: 0,
+  hours_per_week: 0,
 });
 
 export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormProps) {
@@ -32,8 +31,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormPro
     initial?.grade_configs.length
       ? initial.grade_configs.map((g) => ({
           grade_level: g.grade_level,
-          min_hours_per_week: g.min_hours_per_week,
-          max_hours_per_week: g.max_hours_per_week,
+          hours_per_week: g.hours_per_week,
         }))
       : GRADE_LEVELS.map(defaultGradeConfig),
   );
@@ -55,13 +53,9 @@ export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormPro
     );
   };
 
-  const updateGradeConfig = (
-    grade: GradeLevel,
-    field: "min_hours_per_week" | "max_hours_per_week",
-    value: number,
-  ) => {
+  const updateGradeConfig = (grade: GradeLevel, value: number) => {
     setGradeConfigs((prev) =>
-      prev.map((gc) => (gc.grade_level === grade ? { ...gc, [field]: value } : gc)),
+      prev.map((gc) => (gc.grade_level === grade ? { ...gc, hours_per_week: value } : gc)),
     );
   };
 
@@ -111,8 +105,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormPro
                   <tr className="bg-gray-50">
                     <th className="text-left p-2 font-medium w-10">Aktiv</th>
                     <th className="text-left p-2 font-medium">Klasse</th>
-                    <th className="text-left p-2 font-medium">Min. Std/Woche</th>
-                    <th className="text-left p-2 font-medium">Max. Std/Woche</th>
+                    <th className="text-left p-2 font-medium">Std/Woche</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -134,23 +127,8 @@ export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormPro
                             min={0}
                             max={10}
                             disabled={!active}
-                            value={config?.min_hours_per_week ?? 0}
-                            onChange={(e) =>
-                              updateGradeConfig(grade, "min_hours_per_week", Number(e.target.value))
-                            }
-                            className="w-20"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <Input
-                            type="number"
-                            min={0}
-                            max={10}
-                            disabled={!active}
-                            value={config?.max_hours_per_week ?? 0}
-                            onChange={(e) =>
-                              updateGradeConfig(grade, "max_hours_per_week", Number(e.target.value))
-                            }
+                            value={config?.hours_per_week ?? 0}
+                            onChange={(e) => updateGradeConfig(grade, Number(e.target.value))}
                             className="w-20"
                           />
                         </td>

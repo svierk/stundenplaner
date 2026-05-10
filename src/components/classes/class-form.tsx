@@ -187,7 +187,7 @@ export function ClassForm({ open, onClose, onSubmit, initial, subjects }: ClassF
                             <Input
                               type="number"
                               min={0}
-                              max={gradeConfig?.max_hours_per_week ?? 10}
+                              max={gradeConfig?.hours_per_week ?? 10}
                               disabled={!cs}
                               value={cs?.hours_per_week ?? 0}
                               onChange={(e) => updateHours(subject.id, Number(e.target.value))}
@@ -195,9 +195,7 @@ export function ClassForm({ open, onClose, onSubmit, initial, subjects }: ClassF
                             />
                           </td>
                           <td className="p-2 text-xs text-muted-foreground">
-                            {gradeConfig
-                              ? `${gradeConfig.min_hours_per_week}–${gradeConfig.max_hours_per_week} Std`
-                              : "–"}
+                            {gradeConfig ? `${gradeConfig.hours_per_week} Std` : "–"}
                           </td>
                         </tr>
                       );

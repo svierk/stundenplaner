@@ -122,6 +122,24 @@ pub fn get_migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 5,
+            description: "simplify_subject_grade_configs",
+            sql: "
+                CREATE TABLE subject_grade_configs_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+                    grade_level INTEGER NOT NULL,
+                    hours_per_week INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(subject_id, grade_level)
+                );
+                INSERT INTO subject_grade_configs_new (id, subject_id, grade_level, hours_per_week)
+                    SELECT id, subject_id, grade_level, max_hours_per_week FROM subject_grade_configs;
+                DROP TABLE subject_grade_configs;
+                ALTER TABLE subject_grade_configs_new RENAME TO subject_grade_configs;
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

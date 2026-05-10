@@ -29,8 +29,7 @@ type GradeConfigRow = {
   id: number;
   subject_id: number;
   grade_level: number;
-  min_hours_per_week: number;
-  max_hours_per_week: number;
+  hours_per_week: number;
 };
 type DayRow = { subject_id: number; day: number };
 type SlotRow = { subject_id: number; slot: number };
@@ -55,7 +54,7 @@ export async function getSubjects(): Promise<Subject[]> {
     ...r,
     grade_configs: gradeConfigs
       .filter((g) => g.subject_id === r.id)
-      .map((g) => ({ ...g, grade_level: g.grade_level as GradeLevel })),
+      .map((g) => ({ ...g, grade_level: g.grade_level as GradeLevel, hours_per_week: g.hours_per_week })),
     allowed_days: allowedDays
       .filter((d) => d.subject_id === r.id)
       .map((d) => d.day as Weekday)
@@ -92,8 +91,8 @@ export async function deleteSubject(id: number): Promise<void> {
 async function _saveSubjectRelations(db: Database, id: number, data: SubjectFormData) {
   for (const gc of data.grade_configs) {
     await db.execute(
-      "INSERT INTO subject_grade_configs (subject_id, grade_level, min_hours_per_week, max_hours_per_week) VALUES (?,?,?,?)",
-      [id, gc.grade_level, gc.min_hours_per_week, gc.max_hours_per_week],
+      "INSERT INTO subject_grade_configs (subject_id, grade_level, hours_per_week) VALUES (?,?,?)",
+      [id, gc.grade_level, gc.hours_per_week],
     );
   }
   for (const day of data.allowed_days) {
