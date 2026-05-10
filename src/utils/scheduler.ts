@@ -25,6 +25,7 @@ interface ClassState {
   hoursAssigned: Map<number, number>; // subject_id -> hours assigned
   slotsPerDay: Map<Weekday, number>;  // day -> total slots used
   slots: Set<string>;
+  subjectDaySlots: Map<string, Set<number>>; // `${subjectId}-${day}` -> slots used by that subject on that day
 }
 
 function slotKey(day: Weekday, slot: number): string {
@@ -44,7 +45,9 @@ function effectiveHours(teacher: Teacher): number {
   return Math.max(0, teacher.hours_per_week - teacher.additional_duty_hours);
 }
 
-function canTeachSubject(teacher: Teacher, subjectId: number): boolean {
+// Returns true only if the teacher has explicit permission (core or allowed, not forbidden).
+// Used for "most constrained first" ordering — fallback teachers are not counted here.
+function canTeachSubjectExplicit(teacher: Teacher, subjectId: number): boolean {
   if (teacher.forbidden_subject_ids.includes(subjectId)) return false;
   return (
     teacher.core_subject_ids.includes(subjectId) ||
@@ -52,9 +55,28 @@ function canTeachSubject(teacher: Teacher, subjectId: number): boolean {
   );
 }
 
+// Returns true if the teacher is not explicitly forbidden from teaching this subject.
+// Includes fallback capability (priority 3).
+function canTeachSubject(teacher: Teacher, subjectId: number): boolean {
+  return !teacher.forbidden_subject_ids.includes(subjectId);
+}
+
+// Lower number = higher priority.
+// 1 = core subject  2 = explicitly allowed  3 = fallback (not forbidden)
+function teacherSubjectPriority(teacher: Teacher, subjectId: number): number {
+  if (teacher.core_subject_ids.includes(subjectId)) return 1;
+  if (teacher.allowed_subject_ids.includes(subjectId)) return 2;
+  return 3;
+}
+
 function isTeacherAvailableOnDay(teacher: Teacher, day: Weekday): boolean {
   if (!teacher.has_free_day) return true;
   return !teacher.free_days.includes(day);
+}
+
+function isTeacherAvailableAtSlot(teacher: Teacher, slot: number): boolean {
+  if (!teacher.has_free_slots) return true;
+  return !teacher.free_slots.includes(slot);
 }
 
 function getSubjectAllowedDays(subject: Subject): Weekday[] {
@@ -63,10 +85,23 @@ function getSubjectAllowedDays(subject: Subject): Weekday[] {
     : ([1, 2, 3, 4, 5] as Weekday[]);
 }
 
+function wouldViolateDoublePeriodRule(existingSlots: Set<number>, slot: number, noDoublePeriods: boolean): boolean {
+  const hasLeft = existingSlots.has(slot - 1);
+  const hasRight = existingSlots.has(slot + 1);
+
+  if (noDoublePeriods && (hasLeft || hasRight)) return true;
+
+  // Max 2 consecutive: adding this slot must not create a run of 3
+  const runLeft = hasLeft ? (existingSlots.has(slot - 2) ? 2 : 1) : 0;
+  const runRight = hasRight ? (existingSlots.has(slot + 2) ? 2 : 1) : 0;
+  return runLeft + 1 + runRight > 2;
+}
+
 function getSubjectAllowedSlots(subject: Subject, maxSlot: number): number[] {
-  return subject.allowed_slots.length > 0
+  const slots = subject.allowed_slots.length > 0
     ? subject.allowed_slots
     : Array.from({ length: maxSlot }, (_, i) => i + 1);
+  return slots.filter((s) => s <= maxSlot);
 }
 
 /**
@@ -99,13 +134,16 @@ export function generateTimetable(
 ): SchedulerResult {
   const warnings: string[] = [];
   const entries: Omit<TimetableEntry, "id" | "timetable_id">[] = [];
-  const MAX_SLOT = 8;
+
+  // Tracks globally used (day, slot) pairs per subject for no_parallel_classes enforcement
+  const subjectGlobalSlots = new Map<number, Set<string>>();
 
   const maxHoursPerDayByGrade = new Map(
     gradeLevelConfigs.map((c) => [c.grade_level, c.max_hours_per_day]),
   );
-
-  const subjectMap = new Map(subjects.map((s) => [s.id, s]));
+  const minHoursPerDayByGrade = new Map(
+    gradeLevelConfigs.map((c) => [c.grade_level, c.min_hours_per_day]),
+  );
 
   const teacherStates = new Map<number, TeacherState>(
     teachers.map((t) => [
@@ -122,6 +160,7 @@ export function generateTimetable(
         hoursAssigned: new Map(),
         slotsPerDay: new Map(),
         slots: new Set(),
+        subjectDaySlots: new Map(),
       },
     ]),
   );
@@ -136,22 +175,22 @@ export function generateTimetable(
 
   const assignments: Assignment[] = [];
   for (const cls of classes) {
-    for (const cs of cls.subjects) {
-      const subject = subjectMap.get(cs.subject_id);
-      if (!subject || cs.hours_per_week <= 0) continue;
+    for (const subject of subjects) {
+      const gradeConfig = subject.grade_configs.find((gc) => gc.grade_level === cls.grade_level);
+      if (!gradeConfig || gradeConfig.hours_per_week <= 0) continue;
       assignments.push({
         cls,
         subject,
-        remaining: cs.hours_per_week,
+        remaining: gradeConfig.hours_per_week,
         gradeLevel: cls.grade_level,
       });
     }
   }
 
-  // Sort by most constrained (fewest eligible teachers, fewest days, then most hours)
+  // Sort by most constrained (fewest teachers with explicit permission, fewest days, most hours)
   assignments.sort((a, b) => {
-    const eligibleA = teachers.filter((t) => canTeachSubject(t, a.subject.id)).length;
-    const eligibleB = teachers.filter((t) => canTeachSubject(t, b.subject.id)).length;
+    const eligibleA = teachers.filter((t) => canTeachSubjectExplicit(t, a.subject.id)).length;
+    const eligibleB = teachers.filter((t) => canTeachSubjectExplicit(t, b.subject.id)).length;
     if (eligibleA !== eligibleB) return eligibleA - eligibleB;
     const daysA = getSubjectAllowedDays(a.subject).length;
     const daysB = getSubjectAllowedDays(b.subject).length;
@@ -159,36 +198,88 @@ export function generateTimetable(
     return b.remaining - a.remaining;
   });
 
+  // Tracks which teacher is locked in for each (class, subject) pair
+  const classSubjectTeacher = new Map<string, number>();
+
   for (const assignment of assignments) {
     const { cls, subject } = assignment;
     let remaining = assignment.remaining;
     const classState = classStates.get(cls.id)!;
     const allowedDays = getSubjectAllowedDays(subject);
-    const allowedSlots = getSubjectAllowedSlots(subject, MAX_SLOT);
+    const gradeMaxSlot = maxHoursPerDayByGrade.get(cls.grade_level) ?? 6;
+    const gradeMinSlot = minHoursPerDayByGrade.get(cls.grade_level) ?? 4;
+    const allowedSlots = getSubjectAllowedSlots(subject, gradeMaxSlot);
+    const csKey = `${cls.id}-${subject.id}`;
 
     while (remaining > 0) {
+      // Bug 3 fix: read the lock inside the loop so it takes effect from the 2nd hour onward
+      const lockedTeacherId = classSubjectTeacher.get(csKey);
       let placed = false;
 
-      // Build candidate (day, slot) pairs, shuffled to avoid bias
+      // Build candidate (day, slot) pairs.
+      // Day priority: started-but-below-min (0) → empty (1) → at-or-above-min (2).
+      // Within the same group, prefer the day with fewer total lessons.
+      // Pre-shuffle provides random tiebreaking within equal counts.
+      const orderedDays = shuffle(allowedDays).sort((a, b) => {
+        const ca = classState.slotsPerDay.get(a) ?? 0;
+        const cb = classState.slotsPerDay.get(b) ?? 0;
+        const ga = ca === 0 ? 1 : ca < gradeMinSlot ? 0 : 2;
+        const gb = cb === 0 ? 1 : cb < gradeMinSlot ? 0 : 2;
+        if (ga !== gb) return ga - gb;
+        return ca - cb;
+      });
       const candidateSlots: SlotKey[] = [];
-      for (const day of shuffle(allowedDays)) {
+      for (const day of orderedDays) {
         const dayCount = classState.slotsPerDay.get(day) ?? 0;
-        const maxPerDay = maxHoursPerDayByGrade.get(cls.grade_level) ?? 6;
-        if (dayCount >= maxPerDay) continue;
-        for (const slot of shuffle(allowedSlots)) {
-          if (classState.slots.has(slotKey(day, slot))) continue;
-          candidateSlots.push({ day, slot });
+        if (dayCount >= gradeMaxSlot) continue;
+
+        const sdKey = `${subject.id}-${day}`;
+        const subjectSlotsOnDay = classState.subjectDaySlots.get(sdKey) ?? new Set<number>();
+
+        const globalSlots = subjectGlobalSlots.get(subject.id);
+
+        if (!cls.allow_free_periods) {
+          // Bug 2 fix: enforce contiguous scheduling — only the next consecutive slot is valid
+          const nextSlot = dayCount + 1;
+          if (
+            nextSlot <= gradeMaxSlot &&
+            allowedSlots.includes(nextSlot) &&
+            !classState.slots.has(slotKey(day, nextSlot)) &&
+            !wouldViolateDoublePeriodRule(subjectSlotsOnDay, nextSlot, subject.no_double_periods) &&
+            !(subject.no_parallel_classes && globalSlots?.has(slotKey(day, nextSlot)))
+          ) {
+            candidateSlots.push({ day, slot: nextSlot });
+          }
+        } else {
+          for (const slot of shuffle(allowedSlots)) {
+            if (classState.slots.has(slotKey(day, slot))) continue;
+            if (wouldViolateDoublePeriodRule(subjectSlotsOnDay, slot, subject.no_double_periods)) continue;
+            if (subject.no_parallel_classes && globalSlots?.has(slotKey(day, slot))) continue;
+            candidateSlots.push({ day, slot });
+          }
         }
       }
 
-      // Find eligible teachers, prefer those with fewer free periods
+      // If a teacher is locked for this class+subject, only consider them.
+      // Otherwise rank by: 1) subject priority (core > allowed > fallback)
+      //                     2) fewer teacher free-period gaps
+      //                     3) more remaining capacity
       const eligibleTeachers = teachers
         .filter((t) => {
+          if (lockedTeacherId !== undefined) {
+            return (
+              t.id === lockedTeacherId &&
+              effectiveHours(t) > (teacherStates.get(t.id)?.assignedHours ?? 0)
+            );
+          }
           if (!canTeachSubject(t, subject.id)) return false;
           if (effectiveHours(t) <= (teacherStates.get(t.id)?.assignedHours ?? 0)) return false;
           return true;
         })
         .sort((a, b) => {
+          const prioA = teacherSubjectPriority(a, subject.id);
+          const prioB = teacherSubjectPriority(b, subject.id);
+          if (prioA !== prioB) return prioA - prioB;
           const stateA = teacherStates.get(a.id)!;
           const stateB = teacherStates.get(b.id)!;
           const freesA = countTeacherFreePeriods(stateA);
@@ -200,9 +291,9 @@ export function generateTimetable(
       for (const candidate of candidateSlots) {
         const { day, slot } = candidate;
 
-        // Find best available teacher for this slot
         const teacher = eligibleTeachers.find((t) => {
           if (!isTeacherAvailableOnDay(t, day)) return false;
+          if (!isTeacherAvailableAtSlot(t, slot)) return false;
           const ts = teacherStates.get(t.id)!;
           return !ts.busySlots.has(slotKey(day, slot));
         });
@@ -211,7 +302,11 @@ export function generateTimetable(
 
         const teacherState = teacherStates.get(teacher.id)!;
 
-        // Place the entry
+        // Lock this teacher to this class+subject pair on first placement
+        if (!classSubjectTeacher.has(csKey)) {
+          classSubjectTeacher.set(csKey, teacher.id);
+        }
+
         entries.push({
           class_id: cls.id,
           subject_id: subject.id,
@@ -225,7 +320,6 @@ export function generateTimetable(
           teacher_name: `${teacher.first_name} ${teacher.last_name}`,
         });
 
-        // Update states
         teacherState.assignedHours++;
         teacherState.busySlots.add(slotKey(day, slot));
         classState.slots.add(slotKey(day, slot));
@@ -234,6 +328,11 @@ export function generateTimetable(
           subject.id,
           (classState.hoursAssigned.get(subject.id) ?? 0) + 1,
         );
+        const sdKey = `${subject.id}-${day}`;
+        if (!classState.subjectDaySlots.has(sdKey)) classState.subjectDaySlots.set(sdKey, new Set());
+        classState.subjectDaySlots.get(sdKey)!.add(slot);
+        if (!subjectGlobalSlots.has(subject.id)) subjectGlobalSlots.set(subject.id, new Set());
+        subjectGlobalSlots.get(subject.id)!.add(slotKey(day, slot));
 
         remaining--;
         placed = true;
@@ -246,6 +345,19 @@ export function generateTimetable(
             `${remaining} Stunde(n) nicht zugewiesen.`,
         );
         break;
+      }
+    }
+  }
+
+  // Warn about days that ended up below the grade-level minimum
+  const dayNames = ['', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag'];
+  for (const classState of classStates.values()) {
+    const gradeMin = minHoursPerDayByGrade.get(classState.cls.grade_level) ?? 4;
+    for (const [day, count] of classState.slotsPerDay) {
+      if (count < gradeMin) {
+        warnings.push(
+          `Klasse "${classState.cls.name}", ${dayNames[day]}: nur ${count} Stunde(n) geplant — Minimum für Klassenstufe ${classState.cls.grade_level} ist ${gradeMin}.`,
+        );
       }
     }
   }
@@ -273,20 +385,26 @@ function _assignDoubleStaffing(
   for (const entry of entries) {
     if (entry.is_double_staffed) continue;
 
-    const availableTeachers = teachers.filter((t) => {
-      if (t.id === entry.teacher_id) return false;
-      if (!canTeachSubject(t, entry.subject_id)) return false;
-      const ts = teacherStates.get(t.id)!;
-      if (ts.assignedHours >= effectiveHours(t)) return false;
-      if (!isTeacherAvailableOnDay(t, entry.day)) return false;
-      if (ts.busySlots.has(slotKey(entry.day, entry.slot))) return false;
-      return true;
-    });
+    const availableTeachers = teachers
+      .filter((t) => {
+        if (t.id === entry.teacher_id) return false;
+        if (!canTeachSubject(t, entry.subject_id)) return false;
+        const ts = teacherStates.get(t.id)!;
+        if (ts.assignedHours >= effectiveHours(t)) return false;
+        if (!isTeacherAvailableOnDay(t, entry.day)) return false;
+        if (!isTeacherAvailableAtSlot(t, entry.slot)) return false;
+        if (ts.busySlots.has(slotKey(entry.day, entry.slot))) return false;
+        return true;
+      })
+      .sort((a, b) => teacherSubjectPriority(a, entry.subject_id) - teacherSubjectPriority(b, entry.subject_id));
 
     if (availableTeachers.length > 0) {
       const secondTeacher = availableTeachers[0];
       const ts = teacherStates.get(secondTeacher.id)!;
       entry.is_double_staffed = true;
+      entry.second_teacher_id = secondTeacher.id;
+      entry.second_teacher_abbreviation = secondTeacher.abbreviation;
+      entry.second_teacher_name = `${secondTeacher.first_name} ${secondTeacher.last_name}`;
       ts.assignedHours++;
       ts.busySlots.add(slotKey(entry.day, entry.slot));
     }

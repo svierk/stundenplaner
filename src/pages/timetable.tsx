@@ -63,10 +63,9 @@ export function TimetablePage() {
       setWarnings(result.warnings);
 
       const id = await saveTimetable(result.timetable.name, schoolYear, result.entries);
-      const saved = timetables.find((t) => t.id === id);
-      if (saved) setActive(saved);
-
-      await fetchTimetables();
+      // saveTimetable calls fetch() internally — read from live store state, not the stale closure
+      const fresh = useTimetableStore.getState().timetables.find((t) => t.id === id);
+      if (fresh) setActive(fresh);
 
       toast({
         title: "Stundenplan generiert",
@@ -272,6 +271,12 @@ export function TimetablePage() {
                       title={`Klasse ${cls.name}`}
                       entries={entries}
                       maxSlot={maxSlot}
+                      getCellClass={(day, slot) => {
+                        const e = entries.find((e) => e.day === day && e.slot === slot);
+                        return e?.is_double_staffed
+                          ? "bg-emerald-50 border border-emerald-300"
+                          : "bg-primary/10 border border-primary/20";
+                      }}
                       renderCell={(day, slot) => {
                         const e = entries.find((e) => e.day === day && e.slot === slot);
                         if (!e) return null;
@@ -280,7 +285,9 @@ export function TimetablePage() {
                             <div className="font-medium">{e.subject_name}</div>
                             <div className="text-muted-foreground">
                               {e.teacher_abbreviation}
-                              {e.is_double_staffed && " +1"}
+                              {e.is_double_staffed && e.second_teacher_abbreviation && (
+                                <span className="text-emerald-700"> + {e.second_teacher_abbreviation}</span>
+                              )}
                             </div>
                           </>
                         );
@@ -289,7 +296,11 @@ export function TimetablePage() {
                   );
                 })
               : displayedTeachers.map((teacher) => {
-                  const entries = allEntries.filter((e) => e.teacher_abbreviation === teacher.abbreviation);
+                  const entries = allEntries.filter(
+                    (e) =>
+                      e.teacher_abbreviation === teacher.abbreviation ||
+                      (e.is_double_staffed && e.second_teacher_abbreviation === teacher.abbreviation),
+                  );
                   if (entries.length === 0 && selectedTeacherAbbr !== "all") return null;
                   const maxSlot = entries.reduce((m, e) => Math.max(m, e.slot), 6);
                   return (
@@ -298,13 +309,25 @@ export function TimetablePage() {
                       title={`${teacher.last_name}, ${teacher.first_name} (${teacher.abbreviation})`}
                       entries={entries}
                       maxSlot={maxSlot}
+                      getCellClass={(day, slot) => {
+                        const e = entries.find((e) => e.day === day && e.slot === slot);
+                        return e?.is_double_staffed
+                          ? "bg-emerald-50 border border-emerald-300"
+                          : "bg-primary/10 border border-primary/20";
+                      }}
                       renderCell={(day, slot) => {
                         const e = entries.find((e) => e.day === day && e.slot === slot);
                         if (!e) return null;
+                        const isSecondary = e.second_teacher_abbreviation === teacher.abbreviation;
                         return (
                           <>
                             <div className="font-medium">{e.subject_name}</div>
-                            <div className="text-muted-foreground">{e.class_name}</div>
+                            <div className="text-muted-foreground">
+                              {e.class_name}
+                              {isSecondary && (
+                                <span className="text-emerald-700"> (2.)</span>
+                              )}
+                            </div>
                           </>
                         );
                       }}
@@ -334,11 +357,13 @@ function TimetableGrid({
   entries,
   maxSlot,
   renderCell,
+  getCellClass,
 }: {
   title: string;
   entries: { day: Weekday; slot: number }[];
   maxSlot: number;
   renderCell: (day: Weekday, slot: number) => ReactNode;
+  getCellClass?: (day: Weekday, slot: number) => string;
 }) {
   return (
     <Card>
@@ -369,7 +394,7 @@ function TimetableGrid({
                     return (
                       <td key={day} className="p-1 border-r align-top">
                         {hasEntry ? (
-                          <div className="rounded px-1.5 py-1 bg-primary/10 border border-primary/20 text-xs">
+                          <div className={`rounded px-1.5 py-1 text-xs ${getCellClass ? getCellClass(day, slot) : "bg-primary/10 border border-primary/20"}`}>
                             {renderCell(day, slot)}
                           </div>
                         ) : (

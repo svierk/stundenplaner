@@ -29,6 +29,8 @@ export interface Subject {
   grade_configs: SubjectGradeConfig[];
   allowed_days: Weekday[];
   allowed_slots: number[];
+  no_double_periods: boolean;
+  no_parallel_classes: boolean;
 }
 
 export interface SubjectFormData {
@@ -36,6 +38,8 @@ export interface SubjectFormData {
   grade_configs: { grade_level: GradeLevel; hours_per_week: number }[];
   allowed_days: Weekday[];
   allowed_slots: number[];
+  no_double_periods: boolean;
+  no_parallel_classes: boolean;
 }
 
 // ─── Teachers ─────────────────────────────────────────────────────────────────
@@ -57,6 +61,8 @@ export interface Teacher {
   forbidden_subject_ids: number[];
   additional_duty_name: string | null;
   additional_duty_hours: number;
+  has_free_slots: boolean;
+  free_slots: number[];
 }
 
 export interface TeacherFormData {
@@ -73,6 +79,8 @@ export interface TeacherFormData {
   forbidden_subject_ids: number[];
   additional_duty_name: string | null;
   additional_duty_hours: number;
+  has_free_slots: boolean;
+  free_slots: number[];
 }
 
 // ─── Grade level config ───────────────────────────────────────────────────────
@@ -85,26 +93,18 @@ export interface GradeLevelConfig {
 
 // ─── Classes ──────────────────────────────────────────────────────────────────
 
-export interface ClassSubject {
-  subject_id: number;
-  subject_name?: string;
-  hours_per_week: number;
-}
-
 export interface SchoolClass {
   id: number;
   name: string;
   grade_level: GradeLevel;
   allow_free_periods: boolean;
   created_at: string;
-  subjects: ClassSubject[];
 }
 
 export interface ClassFormData {
   name: string;
   grade_level: GradeLevel;
   allow_free_periods: boolean;
-  subjects: ClassSubject[];
 }
 
 // ─── Timetable ────────────────────────────────────────────────────────────────
@@ -122,7 +122,9 @@ export interface TimetableEntry {
   day: Weekday;
   slot: number;
   is_double_staffed: boolean;
-  additional_teacher_ids?: number[];
+  second_teacher_id?: number;
+  second_teacher_abbreviation?: string;
+  second_teacher_name?: string;
 }
 
 export interface Timetable {

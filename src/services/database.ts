@@ -3,7 +3,6 @@ import type {
   Subject,
   Teacher,
   SchoolClass,
-  ClassSubject,
   Weekday,
   SubjectFormData,
   TeacherFormData,
@@ -25,7 +24,7 @@ export async function getDb(): Promise<Database> {
 
 // ─── Subjects ────────────────────────────────────────────────────────────────
 
-type SubjectRow = { id: number; name: string; created_at: string };
+type SubjectRow = { id: number; name: string; created_at: string; no_double_periods: number; no_parallel_classes: number };
 type GradeConfigRow = {
   id: number;
   subject_id: number;
@@ -52,7 +51,11 @@ export async function getSubjects(): Promise<Subject[]> {
   );
 
   return rows.map((r) => ({
-    ...r,
+    id: r.id,
+    name: r.name,
+    created_at: r.created_at,
+    no_double_periods: r.no_double_periods === 1,
+    no_parallel_classes: r.no_parallel_classes === 1,
     grade_configs: gradeConfigs
       .filter((g) => g.subject_id === r.id)
       .map((g) => ({ ...g, grade_level: g.grade_level as GradeLevel, hours_per_week: g.hours_per_week })),
@@ -69,7 +72,10 @@ export async function getSubjects(): Promise<Subject[]> {
 
 export async function createSubject(data: SubjectFormData): Promise<number> {
   const db = await getDb();
-  const result = await db.execute("INSERT INTO subjects (name) VALUES (?)", [data.name]);
+  const result = await db.execute(
+    "INSERT INTO subjects (name, no_double_periods, no_parallel_classes) VALUES (?,?,?)",
+    [data.name, data.no_double_periods ? 1 : 0, data.no_parallel_classes ? 1 : 0],
+  );
   const id = result.lastInsertId as number;
   await _saveSubjectRelations(db, id, data);
   return id;
@@ -77,7 +83,10 @@ export async function createSubject(data: SubjectFormData): Promise<number> {
 
 export async function updateSubject(id: number, data: SubjectFormData): Promise<void> {
   const db = await getDb();
-  await db.execute("UPDATE subjects SET name = ? WHERE id = ?", [data.name, id]);
+  await db.execute(
+    "UPDATE subjects SET name = ?, no_double_periods = ?, no_parallel_classes = ? WHERE id = ?",
+    [data.name, data.no_double_periods ? 1 : 0, data.no_parallel_classes ? 1 : 0, id],
+  );
   await db.execute("DELETE FROM subject_grade_configs WHERE subject_id = ?", [id]);
   await db.execute("DELETE FROM subject_allowed_days WHERE subject_id = ?", [id]);
   await db.execute("DELETE FROM subject_allowed_slots WHERE subject_id = ?", [id]);
@@ -123,6 +132,8 @@ type TeacherRow = {
   created_at: string;
   additional_duty_name: string | null;
   additional_duty_hours: number;
+  has_free_slots: number;
+  free_slots: string;
 };
 type TeacherSubjectRow = { teacher_id: number; subject_id: number };
 
@@ -168,6 +179,8 @@ export async function getTeachers(): Promise<Teacher[]> {
       .map((s) => s.subject_id),
     additional_duty_name: r.additional_duty_name,
     additional_duty_hours: r.additional_duty_hours ?? 0,
+    has_free_slots: r.has_free_slots === 1,
+    free_slots: (JSON.parse(r.free_slots ?? "[]") as number[]),
   }));
 }
 
@@ -176,8 +189,8 @@ export async function createTeacher(data: TeacherFormData): Promise<number> {
   const result = await db.execute(
     `INSERT INTO teachers (first_name, last_name, abbreviation, hours_per_week,
      is_class_teacher, has_free_day, free_days, own_class_id,
-     additional_duty_name, additional_duty_hours)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+     additional_duty_name, additional_duty_hours, has_free_slots, free_slots)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       data.first_name,
       data.last_name,
@@ -189,6 +202,8 @@ export async function createTeacher(data: TeacherFormData): Promise<number> {
       data.own_class_id,
       data.additional_duty_name,
       data.additional_duty_hours,
+      data.has_free_slots ? 1 : 0,
+      JSON.stringify(data.free_slots),
     ],
   );
   const id = result.lastInsertId as number;
@@ -201,7 +216,7 @@ export async function updateTeacher(id: number, data: TeacherFormData): Promise<
   await db.execute(
     `UPDATE teachers SET first_name=?, last_name=?, abbreviation=?, hours_per_week=?,
      is_class_teacher=?, has_free_day=?, free_days=?, own_class_id=?,
-     additional_duty_name=?, additional_duty_hours=? WHERE id=?`,
+     additional_duty_name=?, additional_duty_hours=?, has_free_slots=?, free_slots=? WHERE id=?`,
     [
       data.first_name,
       data.last_name,
@@ -213,6 +228,8 @@ export async function updateTeacher(id: number, data: TeacherFormData): Promise<
       data.own_class_id,
       data.additional_duty_name,
       data.additional_duty_hours,
+      data.has_free_slots ? 1 : 0,
+      JSON.stringify(data.free_slots),
       id,
     ],
   );
@@ -289,39 +306,16 @@ type ClassRow = {
   allow_free_periods: number;
   created_at: string;
 };
-type ClassSubjectRow = {
-  class_id: number;
-  subject_id: number;
-  subject_name: string;
-  hours_per_week: number;
-};
 
 export async function getClasses(): Promise<SchoolClass[]> {
   const db = await getDb();
   const rows = await db.select<ClassRow[]>("SELECT * FROM classes ORDER BY grade_level, name");
-  const ids = rows.map((r) => r.id);
-  if (ids.length === 0) return [];
-
-  const classSubjects = await db.select<ClassSubjectRow[]>(
-    `SELECT cs.*, s.name as subject_name
-     FROM class_subjects cs
-     JOIN subjects s ON s.id = cs.subject_id
-     WHERE cs.class_id IN (${ids.join(",")})`,
-  );
-
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
     grade_level: r.grade_level as GradeLevel,
     allow_free_periods: r.allow_free_periods === 1,
     created_at: r.created_at,
-    subjects: classSubjects
-      .filter((s) => s.class_id === r.id)
-      .map((s) => ({
-        subject_id: s.subject_id,
-        subject_name: s.subject_name,
-        hours_per_week: s.hours_per_week,
-      })),
   }));
 }
 
@@ -331,9 +325,7 @@ export async function createClass(data: ClassFormData): Promise<number> {
     `INSERT INTO classes (name, grade_level, allow_free_periods) VALUES (?,?,?)`,
     [data.name, data.grade_level, data.allow_free_periods ? 1 : 0],
   );
-  const id = result.lastInsertId as number;
-  await _saveClassSubjects(db, id, data.subjects);
-  return id;
+  return result.lastInsertId as number;
 }
 
 export async function updateClass(id: number, data: ClassFormData): Promise<void> {
@@ -342,22 +334,11 @@ export async function updateClass(id: number, data: ClassFormData): Promise<void
     `UPDATE classes SET name=?, grade_level=?, allow_free_periods=? WHERE id=?`,
     [data.name, data.grade_level, data.allow_free_periods ? 1 : 0, id],
   );
-  await db.execute("DELETE FROM class_subjects WHERE class_id = ?", [id]);
-  await _saveClassSubjects(db, id, data.subjects);
 }
 
 export async function deleteClass(id: number): Promise<void> {
   const db = await getDb();
   await db.execute("DELETE FROM classes WHERE id = ?", [id]);
-}
-
-async function _saveClassSubjects(db: Database, id: number, subjects: ClassSubject[]) {
-  for (const s of subjects) {
-    await db.execute(
-      "INSERT INTO class_subjects (class_id, subject_id, hours_per_week) VALUES (?,?,?)",
-      [id, s.subject_id, s.hours_per_week],
-    );
-  }
 }
 
 // ─── Timetables ───────────────────────────────────────────────────────────────
@@ -377,6 +358,10 @@ type EntryRow = {
   day: number;
   slot: number;
   is_double_staffed: number;
+  second_teacher_id: number | null;
+  second_teacher_abbreviation: string | null;
+  second_teacher_last_name: string | null;
+  second_teacher_first_name: string | null;
 };
 
 export async function getTimetables(): Promise<Timetable[]> {
@@ -400,11 +385,17 @@ export async function getTimetableEntries(timetableId: number): Promise<Timetabl
        s.name as subject_name,
        t.abbreviation as teacher_abbreviation,
        t.last_name as teacher_last_name,
-       t.first_name as teacher_first_name
+       t.first_name as teacher_first_name,
+       tds.teacher_id as second_teacher_id,
+       t2.abbreviation as second_teacher_abbreviation,
+       t2.last_name as second_teacher_last_name,
+       t2.first_name as second_teacher_first_name
      FROM timetable_entries e
      JOIN classes c ON c.id = e.class_id
      JOIN subjects s ON s.id = e.subject_id
      JOIN teachers t ON t.id = e.teacher_id
+     LEFT JOIN timetable_double_staff tds ON tds.entry_id = e.id
+     LEFT JOIN teachers t2 ON t2.id = tds.teacher_id
      WHERE e.timetable_id = ?
      ORDER BY e.class_id, e.day, e.slot`,
     [timetableId],
@@ -423,6 +414,11 @@ export async function getTimetableEntries(timetableId: number): Promise<Timetabl
     day: r.day as Weekday,
     slot: r.slot,
     is_double_staffed: r.is_double_staffed === 1,
+    second_teacher_id: r.second_teacher_id ?? undefined,
+    second_teacher_abbreviation: r.second_teacher_abbreviation ?? undefined,
+    second_teacher_name: r.second_teacher_last_name
+      ? `${r.second_teacher_first_name} ${r.second_teacher_last_name}`
+      : undefined,
   }));
 }
 
@@ -438,7 +434,7 @@ export async function saveTimetable(
   );
   const timetableId = result.lastInsertId as number;
   for (const entry of entries) {
-    await db.execute(
+    const entryResult = await db.execute(
       `INSERT INTO timetable_entries
        (timetable_id, class_id, subject_id, teacher_id, day, slot, is_double_staffed)
        VALUES (?,?,?,?,?,?,?)`,
@@ -452,6 +448,12 @@ export async function saveTimetable(
         entry.is_double_staffed ? 1 : 0,
       ],
     );
+    if (entry.second_teacher_id) {
+      await db.execute(
+        "INSERT INTO timetable_double_staff (entry_id, teacher_id) VALUES (?,?)",
+        [entryResult.lastInsertId as number, entry.second_teacher_id],
+      );
+    }
   }
   return timetableId;
 }

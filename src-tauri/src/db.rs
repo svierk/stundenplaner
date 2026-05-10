@@ -179,6 +179,33 @@ pub fn get_migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 8,
+            description: "drop_class_subjects_table",
+            sql: "DROP TABLE IF EXISTS class_subjects;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 9,
+            description: "add_free_slots_to_teachers",
+            sql: "
+                ALTER TABLE teachers ADD COLUMN has_free_slots INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE teachers ADD COLUMN free_slots TEXT NOT NULL DEFAULT '[]';
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 10,
+            description: "add_no_double_periods_to_subjects",
+            sql: "ALTER TABLE subjects ADD COLUMN no_double_periods INTEGER NOT NULL DEFAULT 0;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 11,
+            description: "add_no_parallel_classes_to_subjects",
+            sql: "ALTER TABLE subjects ADD COLUMN no_parallel_classes INTEGER NOT NULL DEFAULT 0;",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

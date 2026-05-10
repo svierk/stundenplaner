@@ -77,11 +77,19 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
   const [hasAdditionalDuty, setHasAdditionalDuty] = useState(!!initial?.additional_duty_name);
   const [additionalDutyName, setAdditionalDutyName] = useState(initial?.additional_duty_name ?? "");
   const [additionalDutyHours, setAdditionalDutyHours] = useState(initial?.additional_duty_hours ?? 1);
+  const [hasFreeSlots, setHasFreeSlots] = useState(initial?.has_free_slots ?? false);
+  const [freeSlots, setFreeSlots] = useState<number[]>(initial?.free_slots ?? []);
   const [saving, setSaving] = useState(false);
 
   const toggleFreeDay = (day: Weekday) => {
     setFreeDays((prev) =>
       prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort() as Weekday[],
+    );
+  };
+
+  const toggleFreeSlot = (slot: number) => {
+    setFreeSlots((prev) =>
+      prev.includes(slot) ? prev.filter((s) => s !== slot) : [...prev, slot].sort((a, b) => a - b),
     );
   };
 
@@ -103,6 +111,8 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
         forbidden_subject_ids: forbiddenSubjectIds,
         additional_duty_name: hasAdditionalDuty ? additionalDutyName.trim() || null : null,
         additional_duty_hours: hasAdditionalDuty ? additionalDutyHours : 0,
+        has_free_slots: hasFreeSlots,
+        free_slots: hasFreeSlots ? freeSlots : [],
       });
       onClose();
     } catch {
@@ -155,7 +165,7 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-3 gap-6">
             <div className="flex items-center gap-2">
               <Checkbox
                 id="classTeacher"
@@ -172,6 +182,14 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
               />
               <Label htmlFor="freeDay">Hat freien Tag</Label>
             </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="freeSlots"
+                checked={hasFreeSlots}
+                onCheckedChange={(v) => setHasFreeSlots(!!v)}
+              />
+              <Label htmlFor="freeSlots">Hat freie Stunden</Label>
+            </div>
           </div>
 
           {hasFreeDay && (
@@ -185,6 +203,23 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
                       onCheckedChange={() => toggleFreeDay(wd.value)}
                     />
                     <span className="text-sm">{wd.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {hasFreeSlots && (
+            <div className="space-y-1.5">
+              <Label>Freie Stunden (an allen Wochentagen)</Label>
+              <div className="flex gap-2 flex-wrap">
+                {[1, 2, 3, 4, 5, 6].map((slot) => (
+                  <label key={slot} className="flex items-center gap-1.5 cursor-pointer">
+                    <Checkbox
+                      checked={freeSlots.includes(slot)}
+                      onCheckedChange={() => toggleFreeSlot(slot)}
+                    />
+                    <span className="text-sm">{slot}. Std</span>
                   </label>
                 ))}
               </div>

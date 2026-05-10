@@ -39,6 +39,8 @@ export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormPro
     initial?.allowed_days.length ? initial.allowed_days : [1, 2, 3, 4, 5],
   );
   const [allowedSlots, setAllowedSlots] = useState<number[]>(initial?.allowed_slots ?? []);
+  const [noDoublePeriods, setNoDoublePeriods] = useState(initial?.no_double_periods ?? false);
+  const [noParallelClasses, setNoParallelClasses] = useState(initial?.no_parallel_classes ?? false);
   const [saving, setSaving] = useState(false);
 
   const toggleDay = (day: Weekday) => {
@@ -71,7 +73,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormPro
     if (!name.trim()) return;
     setSaving(true);
     try {
-      await onSubmit({ name: name.trim(), grade_configs: gradeConfigs, allowed_days: allowedDays, allowed_slots: allowedSlots });
+      await onSubmit({ name: name.trim(), grade_configs: gradeConfigs, allowed_days: allowedDays, allowed_slots: allowedSlots, no_double_periods: noDoublePeriods, no_parallel_classes: noParallelClasses });
       onClose();
     } catch {
       // error displayed by parent via toast
@@ -177,6 +179,24 @@ export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormPro
                 </label>
               ))}
             </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="noDoublePeriods"
+              checked={noDoublePeriods}
+              onCheckedChange={(v) => setNoDoublePeriods(!!v)}
+            />
+            <Label htmlFor="noDoublePeriods">Keine Doppelstunden</Label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="noParallelClasses"
+              checked={noParallelClasses}
+              onCheckedChange={(v) => setNoParallelClasses(!!v)}
+            />
+            <Label htmlFor="noParallelClasses">Kein Parallelunterricht (klassenübergreifend)</Label>
           </div>
         </div>
 

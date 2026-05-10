@@ -4,21 +4,18 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ClassForm } from "@/components/classes/class-form";
 import { useClassStore } from "@/stores/class-store";
-import { useSubjectStore } from "@/stores/subject-store";
 import { useToast } from "@/hooks/use-toast";
 import type { SchoolClass } from "@/types";
 
 export function ClassesPage() {
   const { classes, loading, fetch, create, update, remove } = useClassStore();
-  const { subjects, fetch: fetchSubjects } = useSubjectStore();
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<SchoolClass | undefined>();
 
   useEffect(() => {
     fetch();
-    fetchSubjects();
-  }, [fetch, fetchSubjects]);
+  }, [fetch]);
 
   const handleCreate = async (data: Parameters<typeof create>[0]) => {
     try {
@@ -98,7 +95,6 @@ export function ClassesPage() {
                 <th className="text-left p-3 font-medium">Klasse</th>
                 <th className="text-left p-3 font-medium">Stufe</th>
                 <th className="text-left p-3 font-medium">Freistunden</th>
-                <th className="text-left p-3 font-medium">Fächer</th>
                 <th className="p-3 w-24"></th>
               </tr>
             </thead>
@@ -111,20 +107,6 @@ export function ClassesPage() {
                   </td>
                   <td className="p-3 text-muted-foreground">
                     {cls.allow_free_periods ? "Ja" : "Nein"}
-                  </td>
-                  <td className="p-3">
-                    <div className="flex gap-1 flex-wrap">
-                      {cls.subjects.slice(0, 4).map((s) => (
-                        <Badge key={s.subject_id} variant="outline" className="text-xs">
-                          {s.subject_name ?? s.subject_id} ({s.hours_per_week}h)
-                        </Badge>
-                      ))}
-                      {cls.subjects.length > 4 && (
-                        <Badge variant="outline" className="text-xs">
-                          +{cls.subjects.length - 4}
-                        </Badge>
-                      )}
-                    </div>
                   </td>
                   <td className="p-3">
                     <div className="flex gap-1 justify-end">
@@ -149,7 +131,6 @@ export function ClassesPage() {
         onClose={closeDialog}
         onSubmit={editing ? handleUpdate : handleCreate}
         initial={editing}
-        subjects={subjects}
       />
     </div>
   );
