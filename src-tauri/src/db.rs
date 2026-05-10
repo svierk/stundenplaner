@@ -206,6 +206,32 @@ pub fn get_migrations() -> Vec<Migration> {
             sql: "ALTER TABLE subjects ADD COLUMN no_parallel_classes INTEGER NOT NULL DEFAULT 0;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 12,
+            description: "replace_core_subjects_with_allowed_subject_classes",
+            sql: "
+                DROP TABLE IF EXISTS teacher_core_subjects;
+                CREATE TABLE IF NOT EXISTS teacher_allowed_subject_classes (
+                    teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+                    subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+                    class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+                    PRIMARY KEY (teacher_id, subject_id, class_id)
+                );
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 13,
+            description: "add_subject_no_parallel_with_table",
+            sql: "
+                CREATE TABLE IF NOT EXISTS subject_no_parallel_with (
+                    subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+                    other_subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+                    PRIMARY KEY (subject_id, other_subject_id)
+                );
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

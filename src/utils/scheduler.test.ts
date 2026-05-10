@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateTimetable } from "./scheduler";
-import type { Teacher, SchoolClass, Subject, GradeLevelConfig } from "@/types";
+import type { Teacher, SchoolClass, Subject, GradeLevelConfig, AllowedSubjectEntry } from "@/types";
 
 const defaultGradeLevelConfigs: GradeLevelConfig[] = [
   { grade_level: 1, min_hours_per_day: 4, max_hours_per_day: 6 },
@@ -18,9 +18,10 @@ const makeSubject = (id: number, name: string, gradeLevel: 1 | 2 | 3 | 4 = 1): S
   allowed_slots: [],
   no_double_periods: false,
   no_parallel_classes: false,
+  no_parallel_subject_ids: [],
 });
 
-const makeTeacher = (id: number, coreSubjectIds: number[]): Teacher => ({
+const makeTeacher = (id: number, allowedSubjectIds: number[]): Teacher => ({
   id,
   first_name: `Teacher${id}`,
   last_name: `Last${id}`,
@@ -31,8 +32,7 @@ const makeTeacher = (id: number, coreSubjectIds: number[]): Teacher => ({
   free_days: [],
   own_class_id: null,
   created_at: "",
-  core_subject_ids: coreSubjectIds,
-  allowed_subject_ids: [],
+  allowed_subjects: allowedSubjectIds.map((sid): AllowedSubjectEntry => ({ subject_id: sid, class_ids: [] })),
   forbidden_subject_ids: [],
   additional_duty_name: null,
   additional_duty_hours: 0,
@@ -169,22 +169,19 @@ describe("generateTimetable", () => {
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 
-  it("prefers core-subject teacher over allowed and fallback", () => {
+  it("prefers explicitly allowed teacher over fallback", () => {
     const subjects = [makeSubject(1, "Deutsch")];
     subjects[0].grade_configs[0].hours_per_week = 2;
-    // Teacher 1: fallback only (no core/allowed, not forbidden)
+    // Teacher 1: fallback only (not in allowed, not forbidden)
     const t1 = makeTeacher(1, []);
-    // Teacher 2: allowed
-    const t2 = makeTeacher(2, []);
-    t2.allowed_subject_ids = [1];
-    // Teacher 3: core
-    const t3 = makeTeacher(3, [1]);
+    // Teacher 2: explicitly allowed for subject 1
+    const t2 = makeTeacher(2, [1]);
     const classes = [makeClass(1)];
 
-    const result = generateTimetable([t1, t2, t3], classes, subjects, defaultGradeLevelConfigs);
+    const result = generateTimetable([t1, t2], classes, subjects, defaultGradeLevelConfigs);
     const usedTeacherIds = new Set(result.entries.map((e) => e.teacher_id));
-    // Core teacher (3) should be the one locked in
-    expect(usedTeacherIds.has(3)).toBe(true);
+    // Allowed teacher (2) should be the one locked in
+    expect(usedTeacherIds.has(2)).toBe(true);
     expect(usedTeacherIds.size).toBe(1);
   });
 

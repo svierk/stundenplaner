@@ -18,6 +18,7 @@ interface SubjectFormProps {
   onClose: () => void;
   onSubmit: (data: SubjectFormData) => Promise<void>;
   initial?: Subject;
+  allSubjects: Subject[];
 }
 
 const defaultGradeConfig = (grade: GradeLevel) => ({
@@ -25,7 +26,7 @@ const defaultGradeConfig = (grade: GradeLevel) => ({
   hours_per_week: 0,
 });
 
-export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormProps) {
+export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: SubjectFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [gradeConfigs, setGradeConfigs] = useState(
     initial?.grade_configs.length
@@ -41,7 +42,17 @@ export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormPro
   const [allowedSlots, setAllowedSlots] = useState<number[]>(initial?.allowed_slots ?? []);
   const [noDoublePeriods, setNoDoublePeriods] = useState(initial?.no_double_periods ?? false);
   const [noParallelClasses, setNoParallelClasses] = useState(initial?.no_parallel_classes ?? false);
+  const [noParallelSubjectIds, setNoParallelSubjectIds] = useState<number[]>(
+    initial?.no_parallel_subject_ids ?? [],
+  );
   const [saving, setSaving] = useState(false);
+
+  const otherSubjects = allSubjects.filter((s) => s.id !== initial?.id);
+
+  const toggleNoParallelSubject = (id: number) =>
+    setNoParallelSubjectIds((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
+    );
 
   const toggleDay = (day: Weekday) => {
     setAllowedDays((prev) =>
@@ -73,7 +84,15 @@ export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormPro
     if (!name.trim()) return;
     setSaving(true);
     try {
-      await onSubmit({ name: name.trim(), grade_configs: gradeConfigs, allowed_days: allowedDays, allowed_slots: allowedSlots, no_double_periods: noDoublePeriods, no_parallel_classes: noParallelClasses });
+      await onSubmit({
+        name: name.trim(),
+        grade_configs: gradeConfigs,
+        allowed_days: allowedDays,
+        allowed_slots: allowedSlots,
+        no_double_periods: noDoublePeriods,
+        no_parallel_classes: noParallelClasses,
+        no_parallel_subject_ids: noParallelClasses ? noParallelSubjectIds : [],
+      });
       onClose();
     } catch {
       // error displayed by parent via toast
@@ -190,13 +209,40 @@ export function SubjectForm({ open, onClose, onSubmit, initial }: SubjectFormPro
             <Label htmlFor="noDoublePeriods">Keine Doppelstunden</Label>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="noParallelClasses"
-              checked={noParallelClasses}
-              onCheckedChange={(v) => setNoParallelClasses(!!v)}
-            />
-            <Label htmlFor="noParallelClasses">Kein Parallelunterricht (klassenübergreifend)</Label>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="noParallelClasses"
+                checked={noParallelClasses}
+                onCheckedChange={(v) => {
+                  setNoParallelClasses(!!v);
+                  if (!v) setNoParallelSubjectIds([]);
+                }}
+              />
+              <Label htmlFor="noParallelClasses">Kein Parallelunterricht (klassenübergreifend)</Label>
+            </div>
+
+            {noParallelClasses && otherSubjects.length > 0 && (
+              <div className="pl-6 space-y-1.5">
+                <Label className="text-sm text-muted-foreground">
+                  Auch nicht parallel zu (optional)
+                </Label>
+                <div className="rounded-md border border-gray-200 p-2 max-h-36 overflow-y-auto space-y-1 bg-gray-50">
+                  {otherSubjects.map((s) => (
+                    <label
+                      key={s.id}
+                      className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-blue-50 transition-colors"
+                    >
+                      <Checkbox
+                        checked={noParallelSubjectIds.includes(s.id)}
+                        onCheckedChange={() => toggleNoParallelSubject(s.id)}
+                      />
+                      <span className="text-sm">{s.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

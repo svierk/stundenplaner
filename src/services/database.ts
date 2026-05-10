@@ -11,6 +11,7 @@ import type {
   Timetable,
   TimetableEntry,
   GradeLevel,
+  AllowedSubjectEntry,
 } from "@/types";
 
 let db: Database | null = null;
@@ -18,6 +19,13 @@ let db: Database | null = null;
 export async function getDb(): Promise<Database> {
   if (!db) {
     db = await Database.load("sqlite:stundenplaner.db");
+    // Ensure tables added in later migrations exist even when the Rust binary
+    // hasn't been recompiled yet (e.g. after a frontend-only hot-reload).
+    await db.execute(`CREATE TABLE IF NOT EXISTS subject_no_parallel_with (
+      subject_id     INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+      other_subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+      PRIMARY KEY (subject_id, other_subject_id)
+    )`);
   }
   return db;
 }
@@ -33,6 +41,7 @@ type GradeConfigRow = {
 };
 type DayRow = { subject_id: number; day: number };
 type SlotRow = { subject_id: number; slot: number };
+type NoParallelRow = { subject_id: number; other_subject_id: number };
 
 export async function getSubjects(): Promise<Subject[]> {
   const db = await getDb();
@@ -49,6 +58,11 @@ export async function getSubjects(): Promise<Subject[]> {
   const allowedSlots = await db.select<SlotRow[]>(
     `SELECT * FROM subject_allowed_slots WHERE subject_id IN (${ids.join(",")})`,
   );
+  // Fetch both directions so either subject's form shows the link
+  const noParallelWith = await db.select<NoParallelRow[]>(
+    `SELECT * FROM subject_no_parallel_with
+     WHERE subject_id IN (${ids.join(",")}) OR other_subject_id IN (${ids.join(",")})`,
+  );
 
   return rows.map((r) => ({
     id: r.id,
@@ -56,6 +70,10 @@ export async function getSubjects(): Promise<Subject[]> {
     created_at: r.created_at,
     no_double_periods: r.no_double_periods === 1,
     no_parallel_classes: r.no_parallel_classes === 1,
+    no_parallel_subject_ids: Array.from(new Set([
+      ...noParallelWith.filter((n) => n.subject_id === r.id).map((n) => n.other_subject_id),
+      ...noParallelWith.filter((n) => n.other_subject_id === r.id).map((n) => n.subject_id),
+    ])),
     grade_configs: gradeConfigs
       .filter((g) => g.subject_id === r.id)
       .map((g) => ({ ...g, grade_level: g.grade_level as GradeLevel, hours_per_week: g.hours_per_week })),
@@ -90,6 +108,11 @@ export async function updateSubject(id: number, data: SubjectFormData): Promise<
   await db.execute("DELETE FROM subject_grade_configs WHERE subject_id = ?", [id]);
   await db.execute("DELETE FROM subject_allowed_days WHERE subject_id = ?", [id]);
   await db.execute("DELETE FROM subject_allowed_slots WHERE subject_id = ?", [id]);
+  // Delete both directions so re-inserting is always clean
+  await db.execute(
+    "DELETE FROM subject_no_parallel_with WHERE subject_id = ? OR other_subject_id = ?",
+    [id, id],
+  );
   await _saveSubjectRelations(db, id, data);
 }
 
@@ -114,6 +137,17 @@ async function _saveSubjectRelations(db: Database, id: number, data: SubjectForm
       slot,
     ]);
   }
+  for (const otherId of data.no_parallel_subject_ids) {
+    // Store both directions so either subject's form shows the link
+    await db.execute(
+      "INSERT OR IGNORE INTO subject_no_parallel_with (subject_id, other_subject_id) VALUES (?,?)",
+      [id, otherId],
+    );
+    await db.execute(
+      "INSERT OR IGNORE INTO subject_no_parallel_with (subject_id, other_subject_id) VALUES (?,?)",
+      [otherId, id],
+    );
+  }
 }
 
 // ─── Teachers ─────────────────────────────────────────────────────────────────
@@ -136,6 +170,7 @@ type TeacherRow = {
   free_slots: string;
 };
 type TeacherSubjectRow = { teacher_id: number; subject_id: number };
+type TeacherSubjectClassRow = { teacher_id: number; subject_id: number; class_id: number };
 
 export async function getTeachers(): Promise<Teacher[]> {
   const db = await getDb();
@@ -148,11 +183,11 @@ export async function getTeachers(): Promise<Teacher[]> {
   const ids = rows.map((r) => r.id);
   if (ids.length === 0) return [];
 
-  const coreSubjects = await db.select<TeacherSubjectRow[]>(
-    `SELECT * FROM teacher_core_subjects WHERE teacher_id IN (${ids.join(",")})`,
-  );
   const allowedSubjects = await db.select<TeacherSubjectRow[]>(
     `SELECT * FROM teacher_allowed_subjects WHERE teacher_id IN (${ids.join(",")})`,
+  );
+  const allowedSubjectClasses = await db.select<TeacherSubjectClassRow[]>(
+    `SELECT * FROM teacher_allowed_subject_classes WHERE teacher_id IN (${ids.join(",")})`,
   );
   const forbiddenSubjects = await db.select<TeacherSubjectRow[]>(
     `SELECT * FROM teacher_forbidden_subjects WHERE teacher_id IN (${ids.join(",")})`,
@@ -170,10 +205,14 @@ export async function getTeachers(): Promise<Teacher[]> {
     own_class_id: r.own_class_id,
     own_class_name: r.own_class_name ?? undefined,
     created_at: r.created_at,
-    core_subject_ids: coreSubjects.filter((s) => s.teacher_id === r.id).map((s) => s.subject_id),
-    allowed_subject_ids: allowedSubjects
+    allowed_subjects: allowedSubjects
       .filter((s) => s.teacher_id === r.id)
-      .map((s) => s.subject_id),
+      .map((s): AllowedSubjectEntry => ({
+        subject_id: s.subject_id,
+        class_ids: allowedSubjectClasses
+          .filter((c) => c.teacher_id === r.id && c.subject_id === s.subject_id)
+          .map((c) => c.class_id),
+      })),
     forbidden_subject_ids: forbiddenSubjects
       .filter((s) => s.teacher_id === r.id)
       .map((s) => s.subject_id),
@@ -233,8 +272,8 @@ export async function updateTeacher(id: number, data: TeacherFormData): Promise<
       id,
     ],
   );
-  await db.execute("DELETE FROM teacher_core_subjects WHERE teacher_id = ?", [id]);
   await db.execute("DELETE FROM teacher_allowed_subjects WHERE teacher_id = ?", [id]);
+  await db.execute("DELETE FROM teacher_allowed_subject_classes WHERE teacher_id = ?", [id]);
   await db.execute("DELETE FROM teacher_forbidden_subjects WHERE teacher_id = ?", [id]);
   await _saveTeacherSubjects(db, id, data);
 }
@@ -245,17 +284,17 @@ export async function deleteTeacher(id: number): Promise<void> {
 }
 
 async function _saveTeacherSubjects(db: Database, id: number, data: TeacherFormData) {
-  for (const sid of data.core_subject_ids) {
-    await db.execute("INSERT INTO teacher_core_subjects (teacher_id, subject_id) VALUES (?,?)", [
-      id,
-      sid,
-    ]);
-  }
-  for (const sid of data.allowed_subject_ids) {
+  for (const entry of data.allowed_subjects) {
     await db.execute(
       "INSERT INTO teacher_allowed_subjects (teacher_id, subject_id) VALUES (?,?)",
-      [id, sid],
+      [id, entry.subject_id],
     );
+    for (const classId of entry.class_ids) {
+      await db.execute(
+        "INSERT INTO teacher_allowed_subject_classes (teacher_id, subject_id, class_id) VALUES (?,?,?)",
+        [id, entry.subject_id, classId],
+      );
+    }
   }
   for (const sid of data.forbidden_subject_ids) {
     await db.execute(

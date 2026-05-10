@@ -185,6 +185,7 @@ export function SubjectsPage() {
         onClose={closeDialog}
         onSubmit={editing ? handleUpdate : handleCreate}
         initial={editing}
+        allSubjects={subjects}
       />
     </div>
   );

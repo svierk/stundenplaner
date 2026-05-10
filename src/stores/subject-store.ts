@@ -19,9 +19,11 @@ export const useSubjectStore = create<SubjectStore>((set, get) => ({
     set({ loading: true });
     try {
       const subjects = await db.getSubjects();
-      set({ subjects });
-    } finally {
+      set({ subjects, loading: false });
+    } catch (err) {
+      console.error("getSubjects failed:", err);
       set({ loading: false });
+      // Do not reset subjects to [] — preserve previously loaded data
     }
   },
 

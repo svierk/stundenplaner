@@ -45,14 +45,21 @@ function effectiveHours(teacher: Teacher): number {
   return Math.max(0, teacher.hours_per_week - teacher.additional_duty_hours);
 }
 
-// Returns true only if the teacher has explicit permission (core or allowed, not forbidden).
-// Used for "most constrained first" ordering — fallback teachers are not counted here.
-function canTeachSubjectExplicit(teacher: Teacher, subjectId: number): boolean {
+// Returns true if the teacher is explicitly allowed for this subject in this class.
+// An allowed subject with no class restriction counts for any class.
+function isSubjectAllowedForClass(teacher: Teacher, subjectId: number, classId: number): boolean {
   if (teacher.forbidden_subject_ids.includes(subjectId)) return false;
-  return (
-    teacher.core_subject_ids.includes(subjectId) ||
-    teacher.allowed_subject_ids.includes(subjectId)
-  );
+  const entry = teacher.allowed_subjects.find((a) => a.subject_id === subjectId);
+  if (!entry) return false;
+  return entry.class_ids.length === 0 || entry.class_ids.includes(classId);
+}
+
+// Returns true if this teacher is specifically designated for this subject in this class
+// (allowed subject with an explicit, non-empty class restriction that includes classId).
+function isDesignatedForClass(teacher: Teacher, subjectId: number, classId: number): boolean {
+  if (teacher.forbidden_subject_ids.includes(subjectId)) return false;
+  const entry = teacher.allowed_subjects.find((a) => a.subject_id === subjectId);
+  return !!entry && entry.class_ids.length > 0 && entry.class_ids.includes(classId);
 }
 
 // Returns true if the teacher is not explicitly forbidden from teaching this subject.
@@ -62,10 +69,16 @@ function canTeachSubject(teacher: Teacher, subjectId: number): boolean {
 }
 
 // Lower number = higher priority.
-// 1 = core subject  2 = explicitly allowed  3 = fallback (not forbidden)
-function teacherSubjectPriority(teacher: Teacher, subjectId: number): number {
-  if (teacher.core_subject_ids.includes(subjectId)) return 1;
-  if (teacher.allowed_subject_ids.includes(subjectId)) return 2;
+// 1 = specifically designated (allowed + class restriction matches this class)
+// 2 = generally allowed (no class restriction)
+// 3 = fallback (not forbidden; includes allowed-for-other-class)
+function teacherSubjectPriority(teacher: Teacher, subjectId: number, classId: number): number {
+  if (teacher.forbidden_subject_ids.includes(subjectId)) return 4;
+  const entry = teacher.allowed_subjects.find((a) => a.subject_id === subjectId);
+  if (!entry) return 3;
+  if (entry.class_ids.length > 0 && entry.class_ids.includes(classId)) return 1;
+  if (entry.class_ids.length === 0) return 2;
+  // Allowed for other classes → fallback for this one (still eligible, just not preferred)
   return 3;
 }
 
@@ -138,6 +151,19 @@ export function generateTimetable(
   // Tracks globally used (day, slot) pairs per subject for no_parallel_classes enforcement
   const subjectGlobalSlots = new Map<number, Set<string>>();
 
+  // Precompute bidirectional mutual exclusion map from no_parallel_subject_ids.
+  // If subject A lists B, neither can occupy the same (day, slot) regardless of which is scheduled first.
+  const mutualExclusions = new Map<number, Set<number>>();
+  for (const subject of subjects) {
+    if (!subject.no_parallel_classes || subject.no_parallel_subject_ids.length === 0) continue;
+    for (const otherId of subject.no_parallel_subject_ids) {
+      if (!mutualExclusions.has(subject.id)) mutualExclusions.set(subject.id, new Set());
+      mutualExclusions.get(subject.id)!.add(otherId);
+      if (!mutualExclusions.has(otherId)) mutualExclusions.set(otherId, new Set());
+      mutualExclusions.get(otherId)!.add(subject.id);
+    }
+  }
+
   const maxHoursPerDayByGrade = new Map(
     gradeLevelConfigs.map((c) => [c.grade_level, c.max_hours_per_day]),
   );
@@ -187,10 +213,15 @@ export function generateTimetable(
     }
   }
 
-  // Sort by most constrained (fewest teachers with explicit permission, fewest days, most hours)
+  // Sort assignments so designated (teacher+class explicitly paired) come first,
+  // then by most constrained (fewest eligible teachers), then fewer allowed days, then more hours.
+  // This ensures a designated teacher's capacity is reserved for their assigned class+subject.
   assignments.sort((a, b) => {
-    const eligibleA = teachers.filter((t) => canTeachSubjectExplicit(t, a.subject.id)).length;
-    const eligibleB = teachers.filter((t) => canTeachSubjectExplicit(t, b.subject.id)).length;
+    const hasDesA = teachers.some((t) => isDesignatedForClass(t, a.subject.id, a.cls.id));
+    const hasDesB = teachers.some((t) => isDesignatedForClass(t, b.subject.id, b.cls.id));
+    if (hasDesA !== hasDesB) return hasDesA ? -1 : 1;
+    const eligibleA = teachers.filter((t) => isSubjectAllowedForClass(t, a.subject.id, a.cls.id)).length;
+    const eligibleB = teachers.filter((t) => isSubjectAllowedForClass(t, b.subject.id, b.cls.id)).length;
     if (eligibleA !== eligibleB) return eligibleA - eligibleB;
     const daysA = getSubjectAllowedDays(a.subject).length;
     const daysB = getSubjectAllowedDays(b.subject).length;
@@ -237,24 +268,37 @@ export function generateTimetable(
         const subjectSlotsOnDay = classState.subjectDaySlots.get(sdKey) ?? new Set<number>();
 
         const globalSlots = subjectGlobalSlots.get(subject.id);
+        const excluded = mutualExclusions.get(subject.id);
+
+        const isParallelBlocked = (sk: string) => {
+          if (subject.no_parallel_classes && globalSlots?.has(sk)) return true;
+          if (excluded) {
+            for (const excId of excluded) {
+              if (subjectGlobalSlots.get(excId)?.has(sk)) return true;
+            }
+          }
+          return false;
+        };
 
         if (!cls.allow_free_periods) {
           // Bug 2 fix: enforce contiguous scheduling — only the next consecutive slot is valid
           const nextSlot = dayCount + 1;
+          const sk = slotKey(day, nextSlot);
           if (
             nextSlot <= gradeMaxSlot &&
             allowedSlots.includes(nextSlot) &&
-            !classState.slots.has(slotKey(day, nextSlot)) &&
+            !classState.slots.has(sk) &&
             !wouldViolateDoublePeriodRule(subjectSlotsOnDay, nextSlot, subject.no_double_periods) &&
-            !(subject.no_parallel_classes && globalSlots?.has(slotKey(day, nextSlot)))
+            !isParallelBlocked(sk)
           ) {
             candidateSlots.push({ day, slot: nextSlot });
           }
         } else {
           for (const slot of shuffle(allowedSlots)) {
-            if (classState.slots.has(slotKey(day, slot))) continue;
+            const sk = slotKey(day, slot);
+            if (classState.slots.has(sk)) continue;
             if (wouldViolateDoublePeriodRule(subjectSlotsOnDay, slot, subject.no_double_periods)) continue;
-            if (subject.no_parallel_classes && globalSlots?.has(slotKey(day, slot))) continue;
+            if (isParallelBlocked(sk)) continue;
             candidateSlots.push({ day, slot });
           }
         }
@@ -277,8 +321,8 @@ export function generateTimetable(
           return true;
         })
         .sort((a, b) => {
-          const prioA = teacherSubjectPriority(a, subject.id);
-          const prioB = teacherSubjectPriority(b, subject.id);
+          const prioA = teacherSubjectPriority(a, subject.id, cls.id);
+          const prioB = teacherSubjectPriority(b, subject.id, cls.id);
           if (prioA !== prioB) return prioA - prioB;
           const stateA = teacherStates.get(a.id)!;
           const stateB = teacherStates.get(b.id)!;
@@ -396,7 +440,7 @@ function _assignDoubleStaffing(
         if (ts.busySlots.has(slotKey(entry.day, entry.slot))) return false;
         return true;
       })
-      .sort((a, b) => teacherSubjectPriority(a, entry.subject_id) - teacherSubjectPriority(b, entry.subject_id));
+      .sort((a, b) => teacherSubjectPriority(a, entry.subject_id, entry.class_id) - teacherSubjectPriority(b, entry.subject_id, entry.class_id));
 
     if (availableTeachers.length > 0) {
       const secondTeacher = availableTeachers[0];

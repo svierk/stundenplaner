@@ -81,7 +81,7 @@ export function TeachersPage() {
       case "name":    return `${a.last_name} ${a.first_name}`.localeCompare(`${b.last_name} ${b.first_name}`) * dir;
       case "abbr":    return a.abbreviation.localeCompare(b.abbreviation) * dir;
       case "hours":   return (a.hours_per_week - b.hours_per_week) * dir;
-      case "core":    return (a.core_subject_ids.length - b.core_subject_ids.length) * dir;
+      case "core":    return (a.allowed_subjects.length - b.allowed_subjects.length) * dir;
       case "freeDay": return ((a.has_free_day ? 1 : 0) - (b.has_free_day ? 1 : 0)) * dir;
       case "class":   return (a.own_class_name ?? "").localeCompare(b.own_class_name ?? "") * dir;
       case "duty":    return (a.additional_duty_name ?? "").localeCompare(b.additional_duty_name ?? "") * dir;
@@ -128,7 +128,7 @@ export function TeachersPage() {
                 <SortHeader label="Name"         sortKey="name"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Kürzel"       sortKey="abbr"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Std/Wo"       sortKey="hours"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Kernfächer"   sortKey="core"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Erl. Fächer"  sortKey="core"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Freier Tag"   sortKey="freeDay" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Klasse"       sortKey="class"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Zusatzaufgabe" sortKey="duty"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
@@ -150,14 +150,14 @@ export function TeachersPage() {
                   <td className="p-3 text-muted-foreground">{teacher.hours_per_week}</td>
                   <td className="p-3">
                     <div className="flex gap-1 flex-wrap">
-                      {getSubjectNames(teacher.core_subject_ids).slice(0, 3).map((name) => (
+                      {getSubjectNames(teacher.allowed_subjects.map((a) => a.subject_id)).slice(0, 3).map((name) => (
                         <Badge key={name} variant="default" className="text-xs">
                           {name}
                         </Badge>
                       ))}
-                      {teacher.core_subject_ids.length > 3 && (
+                      {teacher.allowed_subjects.length > 3 && (
                         <Badge variant="outline" className="text-xs">
-                          +{teacher.core_subject_ids.length - 3}
+                          +{teacher.allowed_subjects.length - 3}
                         </Badge>
                       )}
                     </div>

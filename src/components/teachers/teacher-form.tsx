@@ -17,7 +17,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { Teacher, TeacherFormData, Subject, SchoolClass, Weekday } from "@/types";
+import type {
+  Teacher,
+  TeacherFormData,
+  Subject,
+  SchoolClass,
+  Weekday,
+  AllowedSubjectEntry,
+} from "@/types";
 import { WEEKDAYS } from "@/types";
 
 interface TeacherFormProps {
@@ -29,13 +36,88 @@ interface TeacherFormProps {
   classes: SchoolClass[];
 }
 
-function SubjectMultiSelect({
-  label,
+function AllowedSubjectSelect({
+  subjects,
+  classes,
+  allowed,
+  onChange,
+}: {
+  subjects: Subject[];
+  classes: SchoolClass[];
+  allowed: AllowedSubjectEntry[];
+  onChange: (entries: AllowedSubjectEntry[]) => void;
+}) {
+  const toggleSubject = (id: number) => {
+    if (allowed.some((a) => a.subject_id === id)) {
+      onChange(allowed.filter((a) => a.subject_id !== id));
+    } else {
+      onChange([...allowed, { subject_id: id, class_ids: [] }]);
+    }
+  };
+
+  const toggleClass = (subjectId: number, classId: number) => {
+    onChange(
+      allowed.map((a) => {
+        if (a.subject_id !== subjectId) return a;
+        const newClassIds = a.class_ids.includes(classId)
+          ? a.class_ids.filter((c) => c !== classId)
+          : [...a.class_ids, classId];
+        return { ...a, class_ids: newClassIds };
+      }),
+    );
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <Label>Erlaubte Fächer</Label>
+      <div className="rounded-md border border-gray-200 p-2 max-h-52 overflow-y-auto space-y-1 bg-gray-50">
+        {subjects.length === 0 ? (
+          <p className="text-xs text-muted-foreground p-1">Keine Fächer vorhanden</p>
+        ) : (
+          subjects.map((s) => {
+            const entry = allowed.find((a) => a.subject_id === s.id);
+            const isSelected = !!entry;
+            return (
+              <div key={s.id}>
+                <label className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-blue-50 transition-colors">
+                  <Checkbox checked={isSelected} onCheckedChange={() => toggleSubject(s.id)} />
+                  <span className="text-sm">{s.name}</span>
+                  {isSelected && (
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      {entry!.class_ids.length === 0 ? "Alle Klassen" : `${entry!.class_ids.length} Klasse(n)`}
+                    </span>
+                  )}
+                </label>
+                {isSelected && classes.length > 0 && (
+                  <div className="ml-6 mt-0.5 mb-1 flex gap-3 flex-wrap">
+                    {classes.map((c) => (
+                      <label key={c.id} className="flex items-center gap-1.5 cursor-pointer text-xs">
+                        <Checkbox
+                          checked={entry!.class_ids.includes(c.id)}
+                          onCheckedChange={() => toggleClass(s.id, c.id)}
+                        />
+                        <span>{c.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Ohne Klassenauswahl wird das Fach für beliebige Klassen bevorzugt.
+      </p>
+    </div>
+  );
+}
+
+function ForbiddenSubjectSelect({
   subjects,
   selected,
   onChange,
 }: {
-  label: string;
   subjects: Subject[];
   selected: number[];
   onChange: (ids: number[]) => void;
@@ -45,13 +127,16 @@ function SubjectMultiSelect({
 
   return (
     <div className="space-y-1.5">
-      <Label>{label}</Label>
+      <Label>Nicht erlaubte Fächer</Label>
       <div className="rounded-md border border-gray-200 p-2 max-h-36 overflow-y-auto space-y-1 bg-gray-50">
         {subjects.length === 0 ? (
           <p className="text-xs text-muted-foreground p-1">Keine Fächer vorhanden</p>
         ) : (
           subjects.map((s) => (
-            <label key={s.id} className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-blue-50 transition-colors">
+            <label
+              key={s.id}
+              className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-blue-50 transition-colors"
+            >
               <Checkbox checked={selected.includes(s.id)} onCheckedChange={() => toggle(s.id)} />
               <span className="text-sm">{s.name}</span>
             </label>
@@ -71,9 +156,12 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
   const [hasFreeDay, setHasFreeDay] = useState(initial?.has_free_day ?? false);
   const [freeDays, setFreeDays] = useState<Weekday[]>(initial?.free_days ?? []);
   const [ownClassId, setOwnClassId] = useState<number | null>(initial?.own_class_id ?? null);
-  const [coreSubjectIds, setCoreSubjectIds] = useState<number[]>(initial?.core_subject_ids ?? []);
-  const [allowedSubjectIds, setAllowedSubjectIds] = useState<number[]>(initial?.allowed_subject_ids ?? []);
-  const [forbiddenSubjectIds, setForbiddenSubjectIds] = useState<number[]>(initial?.forbidden_subject_ids ?? []);
+  const [allowedSubjects, setAllowedSubjects] = useState<AllowedSubjectEntry[]>(
+    initial?.allowed_subjects ?? [],
+  );
+  const [forbiddenSubjectIds, setForbiddenSubjectIds] = useState<number[]>(
+    initial?.forbidden_subject_ids ?? [],
+  );
   const [hasAdditionalDuty, setHasAdditionalDuty] = useState(!!initial?.additional_duty_name);
   const [additionalDutyName, setAdditionalDutyName] = useState(initial?.additional_duty_name ?? "");
   const [additionalDutyHours, setAdditionalDutyHours] = useState(initial?.additional_duty_hours ?? 1);
@@ -106,8 +194,7 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
         has_free_day: hasFreeDay,
         free_days: hasFreeDay ? freeDays : [],
         own_class_id: isClassTeacher ? ownClassId : null,
-        core_subject_ids: coreSubjectIds,
-        allowed_subject_ids: allowedSubjectIds,
+        allowed_subjects: allowedSubjects,
         forbidden_subject_ids: forbiddenSubjectIds,
         additional_duty_name: hasAdditionalDuty ? additionalDutyName.trim() || null : null,
         additional_duty_hours: hasAdditionalDuty ? additionalDutyHours : 0,
@@ -281,20 +368,13 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
             )}
           </div>
 
-          <SubjectMultiSelect
-            label="Kernfächer"
+          <AllowedSubjectSelect
             subjects={subjects}
-            selected={coreSubjectIds}
-            onChange={setCoreSubjectIds}
+            classes={classes}
+            allowed={allowedSubjects}
+            onChange={setAllowedSubjects}
           />
-          <SubjectMultiSelect
-            label="Weitere erlaubte Fächer"
-            subjects={subjects}
-            selected={allowedSubjectIds}
-            onChange={setAllowedSubjectIds}
-          />
-          <SubjectMultiSelect
-            label="Nicht erlaubte Fächer"
+          <ForbiddenSubjectSelect
             subjects={subjects}
             selected={forbiddenSubjectIds}
             onChange={setForbiddenSubjectIds}

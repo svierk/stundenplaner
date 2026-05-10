@@ -31,6 +31,7 @@ export interface Subject {
   allowed_slots: number[];
   no_double_periods: boolean;
   no_parallel_classes: boolean;
+  no_parallel_subject_ids: number[];
 }
 
 export interface SubjectFormData {
@@ -40,9 +41,15 @@ export interface SubjectFormData {
   allowed_slots: number[];
   no_double_periods: boolean;
   no_parallel_classes: boolean;
+  no_parallel_subject_ids: number[];
 }
 
 // ─── Teachers ─────────────────────────────────────────────────────────────────
+
+export interface AllowedSubjectEntry {
+  subject_id: number;
+  class_ids: number[]; // empty = unrestricted (any class)
+}
 
 export interface Teacher {
   id: number;
@@ -56,8 +63,7 @@ export interface Teacher {
   own_class_id: number | null;
   own_class_name?: string;
   created_at: string;
-  core_subject_ids: number[];
-  allowed_subject_ids: number[];
+  allowed_subjects: AllowedSubjectEntry[];
   forbidden_subject_ids: number[];
   additional_duty_name: string | null;
   additional_duty_hours: number;
@@ -74,8 +80,7 @@ export interface TeacherFormData {
   has_free_day: boolean;
   free_days: Weekday[];
   own_class_id: number | null;
-  core_subject_ids: number[];
-  allowed_subject_ids: number[];
+  allowed_subjects: AllowedSubjectEntry[];
   forbidden_subject_ids: number[];
   additional_duty_name: string | null;
   additional_duty_hours: number;
