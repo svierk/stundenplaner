@@ -52,7 +52,7 @@ export function TimetablePage() {
       toast({
         variant: "destructive",
         title: "Konfiguration unvollständig",
-        description: "Bitte erst Fächer, Lehrer und Klassen anlegen.",
+        description: "Bitte erst Fächer, Lehrkräfte und Klassen anlegen.",
       });
       return;
     }

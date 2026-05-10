@@ -23,7 +23,7 @@ export function DashboardPage() {
 
   const stats = [
     { label: "Fächer", count: subjects.length, icon: BookOpen, to: "/subjects", color: "text-blue-500" },
-    { label: "Lehrer", count: teachers.length, icon: Users, to: "/teachers", color: "text-green-500" },
+    { label: "Lehrkräfte", count: teachers.length, icon: Users, to: "/teachers", color: "text-green-500" },
     { label: "Klassen", count: classes.length, icon: GraduationCap, to: "/classes", color: "text-orange-500" },
     { label: "Stundenpläne", count: timetables.length, icon: CalendarDays, to: "/timetable", color: "text-purple-500" },
   ];
@@ -63,7 +63,7 @@ export function DashboardPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Konfigurieren Sie zuerst Fächer, Lehrer und Klassen, bevor Sie einen Stundenplan
+            Konfigurieren Sie zuerst Fächer, Lehrkräfte und Klassen, bevor Sie einen Stundenplan
             generieren.
           </p>
           <div className="flex gap-2">

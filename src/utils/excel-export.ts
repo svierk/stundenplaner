@@ -42,21 +42,22 @@ export function exportTimetableToExcel(
   }
 
   // ── Teacher overview sheet ────────────────────────────────────────────────
-  const teacherRows: string[][] = [["Lehrer", "Kürzel", "Std/Wo geplant", "Std/Wo max", "Auslastung %"]];
+  const teacherRows: string[][] = [["Lehrkraft", "Kürzel", "Std/Wo geplant", "Std/Wo verf.", "Auslastung %"]];
   for (const teacher of teachers) {
     const assigned = timetable.entries.filter((e) => e.teacher_id === teacher.id).length;
-    const pct = Math.round((assigned / teacher.hours_per_week) * 100);
+    const available = Math.max(0, teacher.hours_per_week - teacher.additional_duty_hours);
+    const pct = available > 0 ? Math.round((assigned / available) * 100) : 0;
     teacherRows.push([
       `${teacher.last_name}, ${teacher.first_name}`,
       teacher.abbreviation,
       assigned.toString(),
-      teacher.hours_per_week.toString(),
+      available.toString(),
       `${pct}%`,
     ]);
   }
   const teacherWs = XLSX.utils.aoa_to_sheet(teacherRows);
   teacherWs["!cols"] = [{ wch: 25 }, { wch: 8 }, { wch: 15 }, { wch: 12 }, { wch: 12 }];
-  XLSX.utils.book_append_sheet(wb, teacherWs, "Lehrer-Übersicht");
+  XLSX.utils.book_append_sheet(wb, teacherWs, "Lehrkräfte-Übersicht");
 
   // ── Teacher timetable sheet ───────────────────────────────────────────────
   for (const teacher of teachers) {

@@ -27,7 +27,7 @@ export function TeachersPage() {
   const handleCreate = async (data: Parameters<typeof create>[0]) => {
     try {
       await create(data);
-      toast({ title: "Lehrer erstellt" });
+      toast({ title: "Lehrkraft erstellt" });
     } catch (err) {
       toast({ variant: "destructive", title: "Fehler beim Erstellen", description: String(err) });
       throw err;
@@ -38,7 +38,7 @@ export function TeachersPage() {
     if (!editing) return;
     try {
       await update(editing.id, data);
-      toast({ title: "Lehrer aktualisiert" });
+      toast({ title: "Lehrkraft aktualisiert" });
       setEditing(undefined);
     } catch (err) {
       toast({ variant: "destructive", title: "Fehler beim Speichern", description: String(err) });
@@ -47,10 +47,10 @@ export function TeachersPage() {
   };
 
   const handleDelete = async (teacher: Teacher) => {
-    if (!confirm(`Lehrer "${teacher.first_name} ${teacher.last_name}" wirklich löschen?`)) return;
+    if (!confirm(`Lehrkraft "${teacher.first_name} ${teacher.last_name}" wirklich löschen?`)) return;
     try {
       await remove(teacher.id);
-      toast({ title: "Lehrer gelöscht" });
+      toast({ title: "Lehrkraft gelöscht" });
     } catch (err) {
       toast({ variant: "destructive", title: "Fehler beim Löschen", description: String(err) });
     }
@@ -73,14 +73,14 @@ export function TeachersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Lehrer</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Lehrkräfte</h1>
           <p className="text-muted-foreground text-sm mt-1">
             Lehrkräfte konfigurieren und verwalten
           </p>
         </div>
         <Button onClick={() => setDialogOpen(true)}>
           <Plus className="h-4 w-4" />
-          Neuer Lehrer
+          Neue Lehrkraft
         </Button>
       </div>
 
@@ -91,10 +91,10 @@ export function TeachersPage() {
       ) : teachers.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48 gap-3 text-gray-400 border border-gray-200 rounded-lg bg-white">
           <Users className="h-8 w-8 opacity-30" />
-          <p className="text-sm">Noch keine Lehrer angelegt</p>
+          <p className="text-sm">Noch keine Lehrkräfte angelegt</p>
           <Button variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
             <Plus className="h-4 w-4" />
-            Ersten Lehrer anlegen
+            Erste Lehrkraft anlegen
           </Button>
         </div>
       ) : (
@@ -108,6 +108,7 @@ export function TeachersPage() {
                 <th className="text-left p-3 font-medium">Kernfächer</th>
                 <th className="text-left p-3 font-medium">Freier Tag</th>
                 <th className="text-left p-3 font-medium">Klasse</th>
+                <th className="text-left p-3 font-medium">Zusatzaufgabe</th>
                 <th className="p-3 w-24"></th>
               </tr>
             </thead>
@@ -147,6 +148,11 @@ export function TeachersPage() {
                   </td>
                   <td className="p-3 text-muted-foreground">
                     {teacher.own_class_name ?? "–"}
+                  </td>
+                  <td className="p-3 text-muted-foreground">
+                    {teacher.additional_duty_name
+                      ? `${teacher.additional_duty_name} (${teacher.additional_duty_hours}h)`
+                      : "–"}
                   </td>
                   <td className="p-3">
                     <div className="flex gap-1 justify-end">

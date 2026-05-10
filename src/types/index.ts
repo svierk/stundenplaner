@@ -55,6 +55,8 @@ export interface Teacher {
   core_subject_ids: number[];
   allowed_subject_ids: number[];
   forbidden_subject_ids: number[];
+  additional_duty_name: string | null;
+  additional_duty_hours: number;
 }
 
 export interface TeacherFormData {
@@ -69,6 +71,8 @@ export interface TeacherFormData {
   core_subject_ids: number[];
   allowed_subject_ids: number[];
   forbidden_subject_ids: number[];
+  additional_duty_name: string | null;
+  additional_duty_hours: number;
 }
 
 // ─── Grade level config ───────────────────────────────────────────────────────

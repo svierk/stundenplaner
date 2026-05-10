@@ -74,6 +74,9 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
   const [coreSubjectIds, setCoreSubjectIds] = useState<number[]>(initial?.core_subject_ids ?? []);
   const [allowedSubjectIds, setAllowedSubjectIds] = useState<number[]>(initial?.allowed_subject_ids ?? []);
   const [forbiddenSubjectIds, setForbiddenSubjectIds] = useState<number[]>(initial?.forbidden_subject_ids ?? []);
+  const [hasAdditionalDuty, setHasAdditionalDuty] = useState(!!initial?.additional_duty_name);
+  const [additionalDutyName, setAdditionalDutyName] = useState(initial?.additional_duty_name ?? "");
+  const [additionalDutyHours, setAdditionalDutyHours] = useState(initial?.additional_duty_hours ?? 1);
   const [saving, setSaving] = useState(false);
 
   const toggleFreeDay = (day: Weekday) => {
@@ -98,6 +101,8 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
         core_subject_ids: coreSubjectIds,
         allowed_subject_ids: allowedSubjectIds,
         forbidden_subject_ids: forbiddenSubjectIds,
+        additional_duty_name: hasAdditionalDuty ? additionalDutyName.trim() || null : null,
+        additional_duty_hours: hasAdditionalDuty ? additionalDutyHours : 0,
       });
       onClose();
     } catch {
@@ -113,7 +118,7 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{initial ? "Lehrer bearbeiten" : "Neuer Lehrer"}</DialogTitle>
+          <DialogTitle>{initial ? "Lehrkraft bearbeiten" : "Neue Lehrkraft"}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-5">
@@ -157,7 +162,7 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
                 checked={isClassTeacher}
                 onCheckedChange={(v) => setIsClassTeacher(!!v)}
               />
-              <Label htmlFor="classTeacher">Kann Klassenlehrer sein</Label>
+              <Label htmlFor="classTeacher">Kann Klassenleitung sein</Label>
             </div>
             <div className="flex items-center gap-2">
               <Checkbox
@@ -207,6 +212,39 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
               </Select>
             </div>
           )}
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="additionalDuty"
+                checked={hasAdditionalDuty}
+                onCheckedChange={(v) => setHasAdditionalDuty(!!v)}
+              />
+              <Label htmlFor="additionalDuty">Hat Zusatzaufgabe</Label>
+            </div>
+            {hasAdditionalDuty && (
+              <div className="grid grid-cols-2 gap-3 pl-6">
+                <div className="space-y-1.5">
+                  <Label>Bezeichnung</Label>
+                  <Input
+                    value={additionalDutyName}
+                    onChange={(e) => setAdditionalDutyName(e.target.value)}
+                    placeholder="z.B. Schulleitung, Beratung"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Stundenreduktion/Woche</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={hoursPerWeek}
+                    value={additionalDutyHours}
+                    onChange={(e) => setAdditionalDutyHours(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
 
           <SubjectMultiSelect
             label="Kernfächer"

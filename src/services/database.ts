@@ -121,6 +121,8 @@ type TeacherRow = {
   own_class_id: number | null;
   own_class_name: string | null;
   created_at: string;
+  additional_duty_name: string | null;
+  additional_duty_hours: number;
 };
 type TeacherSubjectRow = { teacher_id: number; subject_id: number };
 
@@ -164,6 +166,8 @@ export async function getTeachers(): Promise<Teacher[]> {
     forbidden_subject_ids: forbiddenSubjects
       .filter((s) => s.teacher_id === r.id)
       .map((s) => s.subject_id),
+    additional_duty_name: r.additional_duty_name,
+    additional_duty_hours: r.additional_duty_hours ?? 0,
   }));
 }
 
@@ -171,8 +175,9 @@ export async function createTeacher(data: TeacherFormData): Promise<number> {
   const db = await getDb();
   const result = await db.execute(
     `INSERT INTO teachers (first_name, last_name, abbreviation, hours_per_week,
-     is_class_teacher, has_free_day, free_days, own_class_id)
-     VALUES (?,?,?,?,?,?,?,?)`,
+     is_class_teacher, has_free_day, free_days, own_class_id,
+     additional_duty_name, additional_duty_hours)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
     [
       data.first_name,
       data.last_name,
@@ -182,6 +187,8 @@ export async function createTeacher(data: TeacherFormData): Promise<number> {
       data.has_free_day ? 1 : 0,
       JSON.stringify(data.free_days),
       data.own_class_id,
+      data.additional_duty_name,
+      data.additional_duty_hours,
     ],
   );
   const id = result.lastInsertId as number;
@@ -193,7 +200,8 @@ export async function updateTeacher(id: number, data: TeacherFormData): Promise<
   const db = await getDb();
   await db.execute(
     `UPDATE teachers SET first_name=?, last_name=?, abbreviation=?, hours_per_week=?,
-     is_class_teacher=?, has_free_day=?, free_days=?, own_class_id=? WHERE id=?`,
+     is_class_teacher=?, has_free_day=?, free_days=?, own_class_id=?,
+     additional_duty_name=?, additional_duty_hours=? WHERE id=?`,
     [
       data.first_name,
       data.last_name,
@@ -203,6 +211,8 @@ export async function updateTeacher(id: number, data: TeacherFormData): Promise<
       data.has_free_day ? 1 : 0,
       JSON.stringify(data.free_days),
       data.own_class_id,
+      data.additional_duty_name,
+      data.additional_duty_hours,
       id,
     ],
   );

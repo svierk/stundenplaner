@@ -170,6 +170,15 @@ pub fn get_migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 7,
+            description: "add_additional_duty_to_teachers",
+            sql: "
+                ALTER TABLE teachers ADD COLUMN additional_duty_name TEXT;
+                ALTER TABLE teachers ADD COLUMN additional_duty_hours INTEGER NOT NULL DEFAULT 0;
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

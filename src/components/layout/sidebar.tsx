@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutGrid, end: true },
   { to: "/subjects", label: "Fächer", icon: BookOpen },
-  { to: "/teachers", label: "Lehrer", icon: Users },
+  { to: "/teachers", label: "Lehrkräfte", icon: Users },
   { to: "/classes", label: "Klassen", icon: GraduationCap },
   { to: "/timetable", label: "Stundenplan", icon: CalendarDays },
   { to: "/settings", label: "Einstellungen", icon: Settings },

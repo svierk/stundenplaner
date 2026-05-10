@@ -40,6 +40,10 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+function effectiveHours(teacher: Teacher): number {
+  return Math.max(0, teacher.hours_per_week - teacher.additional_duty_hours);
+}
+
 function canTeachSubject(teacher: Teacher, subjectId: number): boolean {
   if (teacher.forbidden_subject_ids.includes(subjectId)) return false;
   return (
@@ -181,7 +185,7 @@ export function generateTimetable(
       const eligibleTeachers = teachers
         .filter((t) => {
           if (!canTeachSubject(t, subject.id)) return false;
-          if (t.hours_per_week <= (teacherStates.get(t.id)?.assignedHours ?? 0)) return false;
+          if (effectiveHours(t) <= (teacherStates.get(t.id)?.assignedHours ?? 0)) return false;
           return true;
         })
         .sort((a, b) => {
@@ -189,10 +193,8 @@ export function generateTimetable(
           const stateB = teacherStates.get(b.id)!;
           const freesA = countTeacherFreePeriods(stateA);
           const freesB = countTeacherFreePeriods(stateB);
-          // Prefer fewer free periods (minimize gaps)
           if (freesA !== freesB) return freesA - freesB;
-          // Prefer more remaining capacity
-          return (b.hours_per_week - stateB.assignedHours) - (a.hours_per_week - stateA.assignedHours);
+          return (effectiveHours(b) - stateB.assignedHours) - (effectiveHours(a) - stateA.assignedHours);
         });
 
       for (const candidate of candidateSlots) {
@@ -275,7 +277,7 @@ function _assignDoubleStaffing(
       if (t.id === entry.teacher_id) return false;
       if (!canTeachSubject(t, entry.subject_id)) return false;
       const ts = teacherStates.get(t.id)!;
-      if (ts.assignedHours >= t.hours_per_week) return false;
+      if (ts.assignedHours >= effectiveHours(t)) return false;
       if (!isTeacherAvailableOnDay(t, entry.day)) return false;
       if (ts.busySlots.has(slotKey(entry.day, entry.slot))) return false;
       return true;
