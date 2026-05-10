@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { SubjectForm } from "@/components/subjects/subject-form";
 import { useSubjectStore } from "@/stores/subject-store";
 import { useToast } from "@/hooks/use-toast";
+import { SortHeader } from "@/components/ui/sort-header";
 import { WEEKDAYS } from "@/types";
 import type { Subject } from "@/types";
 
@@ -13,6 +14,28 @@ export function SubjectsPage() {
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Subject | undefined>();
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const handleSort = (key: string) => {
+    if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  const sorted = [...subjects].sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    switch (sortKey) {
+      case "name":    return a.name.localeCompare(b.name) * dir;
+      case "grades":  return (a.grade_configs.length - b.grade_configs.length) * dir;
+      case "hours":   return (
+        a.grade_configs.reduce((s, g) => s + g.hours_per_week, 0) -
+        b.grade_configs.reduce((s, g) => s + g.hours_per_week, 0)
+      ) * dir;
+      case "days":    return (a.allowed_days.length - b.allowed_days.length) * dir;
+      case "slots":   return (a.allowed_slots.length - b.allowed_slots.length) * dir;
+      default:        return 0;
+    }
+  });
 
   useEffect(() => {
     fetch();
@@ -93,16 +116,16 @@ export function SubjectsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left p-3 font-medium">Fach</th>
-                <th className="text-left p-3 font-medium">Klassenstufen</th>
-                <th className="text-left p-3 font-medium">Std/Woche</th>
-                <th className="text-left p-3 font-medium">Tage</th>
-                <th className="text-left p-3 font-medium">Stunden</th>
+                <SortHeader label="Fach"         sortKey="name"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Klassenstufen" sortKey="grades" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Std/Woche"    sortKey="hours"  currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Tage"         sortKey="days"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Stunden"      sortKey="slots"  currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
                 <th className="p-3 w-24"></th>
               </tr>
             </thead>
             <tbody>
-              {subjects.map((subject) => (
+              {sorted.map((subject) => (
                 <tr key={subject.id} className="border-t hover:bg-blue-50/60 transition-colors cursor-default">
                   <td className="p-3 font-medium">{subject.name}</td>
                   <td className="p-3">

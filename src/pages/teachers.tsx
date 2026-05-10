@@ -7,6 +7,7 @@ import { useTeacherStore } from "@/stores/teacher-store";
 import { useSubjectStore } from "@/stores/subject-store";
 import { useClassStore } from "@/stores/class-store";
 import { useToast } from "@/hooks/use-toast";
+import { SortHeader } from "@/components/ui/sort-header";
 import { WEEKDAYS } from "@/types";
 import type { Teacher } from "@/types";
 
@@ -66,6 +67,28 @@ export function TeachersPage() {
     setEditing(undefined);
   };
 
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const handleSort = (key: string) => {
+    if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  const sorted = [...teachers].sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    switch (sortKey) {
+      case "name":    return `${a.last_name} ${a.first_name}`.localeCompare(`${b.last_name} ${b.first_name}`) * dir;
+      case "abbr":    return a.abbreviation.localeCompare(b.abbreviation) * dir;
+      case "hours":   return (a.hours_per_week - b.hours_per_week) * dir;
+      case "core":    return (a.core_subject_ids.length - b.core_subject_ids.length) * dir;
+      case "freeDay": return ((a.has_free_day ? 1 : 0) - (b.has_free_day ? 1 : 0)) * dir;
+      case "class":   return (a.own_class_name ?? "").localeCompare(b.own_class_name ?? "") * dir;
+      case "duty":    return (a.additional_duty_name ?? "").localeCompare(b.additional_duty_name ?? "") * dir;
+      default:        return 0;
+    }
+  });
+
   const getSubjectNames = (ids: number[]) =>
     ids.map((id) => subjects.find((s) => s.id === id)?.name).filter(Boolean);
 
@@ -102,18 +125,18 @@ export function TeachersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left p-3 font-medium">Name</th>
-                <th className="text-left p-3 font-medium">Kürzel</th>
-                <th className="text-left p-3 font-medium">Std/Wo</th>
-                <th className="text-left p-3 font-medium">Kernfächer</th>
-                <th className="text-left p-3 font-medium">Freier Tag</th>
-                <th className="text-left p-3 font-medium">Klasse</th>
-                <th className="text-left p-3 font-medium">Zusatzaufgabe</th>
+                <SortHeader label="Name"         sortKey="name"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Kürzel"       sortKey="abbr"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Std/Wo"       sortKey="hours"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Kernfächer"   sortKey="core"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Freier Tag"   sortKey="freeDay" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Klasse"       sortKey="class"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Zusatzaufgabe" sortKey="duty"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
                 <th className="p-3 w-24"></th>
               </tr>
             </thead>
             <tbody>
-              {teachers.map((teacher) => (
+              {sorted.map((teacher) => (
                 <tr key={teacher.id} className="border-t hover:bg-blue-50/60 transition-colors cursor-default">
                   <td className="p-3 font-medium">
                     {teacher.last_name}, {teacher.first_name}

@@ -6,6 +6,7 @@ import { ClassForm } from "@/components/classes/class-form";
 import { useClassStore } from "@/stores/class-store";
 import { useTeacherStore } from "@/stores/teacher-store";
 import { useToast } from "@/hooks/use-toast";
+import { SortHeader } from "@/components/ui/sort-header";
 import type { SchoolClass } from "@/types";
 
 export function ClassesPage() {
@@ -14,6 +15,28 @@ export function ClassesPage() {
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<SchoolClass | undefined>();
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const handleSort = (key: string) => {
+    if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  const sorted = [...classes].sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    switch (sortKey) {
+      case "name":    return a.name.localeCompare(b.name) * dir;
+      case "teacher": {
+        const ta = teachers.find((t) => t.own_class_id === a.id)?.last_name ?? "";
+        const tb = teachers.find((t) => t.own_class_id === b.id)?.last_name ?? "";
+        return ta.localeCompare(tb) * dir;
+      }
+      case "grade":   return (a.grade_level - b.grade_level) * dir;
+      case "free":    return ((a.allow_free_periods ? 1 : 0) - (b.allow_free_periods ? 1 : 0)) * dir;
+      default:        return 0;
+    }
+  });
 
   useEffect(() => {
     fetch();
@@ -95,15 +118,15 @@ export function ClassesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left p-3 font-medium">Klasse</th>
-                <th className="text-left p-3 font-medium">Klassenleitung</th>
-                <th className="text-left p-3 font-medium">Stufe</th>
-                <th className="text-left p-3 font-medium">Freistunden</th>
+                <SortHeader label="Klasse"        sortKey="name"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Klassenleitung" sortKey="teacher" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Stufe"         sortKey="grade"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Freistunden"   sortKey="free"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
                 <th className="p-3 w-24"></th>
               </tr>
             </thead>
             <tbody>
-              {classes.map((cls) => (
+              {sorted.map((cls) => (
                 <tr key={cls.id} className="border-t hover:bg-blue-50/60 transition-colors cursor-default">
                   <td className="p-3 font-medium">{cls.name}</td>
                   <td className="p-3 text-muted-foreground">
