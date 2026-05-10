@@ -30,6 +30,7 @@ export interface Subject {
   allowed_days: Weekday[];
   allowed_slots: number[];
   no_double_periods: boolean;
+  no_double_staffing: boolean;
   no_parallel_classes: boolean;
   no_parallel_subject_ids: number[];
 }
@@ -40,6 +41,7 @@ export interface SubjectFormData {
   allowed_days: Weekday[];
   allowed_slots: number[];
   no_double_periods: boolean;
+  no_double_staffing: boolean;
   no_parallel_classes: boolean;
   no_parallel_subject_ids: number[];
 }

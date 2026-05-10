@@ -17,6 +17,7 @@ const makeSubject = (id: number, name: string, gradeLevel: 1 | 2 | 3 | 4 = 1): S
   allowed_days: [],
   allowed_slots: [],
   no_double_periods: false,
+  no_double_staffing: false,
   no_parallel_classes: false,
   no_parallel_subject_ids: [],
 });

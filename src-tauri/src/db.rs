@@ -232,6 +232,12 @@ pub fn get_migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 14,
+            description: "add_no_double_staffing_to_subjects",
+            sql: "ALTER TABLE subjects ADD COLUMN no_double_staffing INTEGER NOT NULL DEFAULT 0;",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

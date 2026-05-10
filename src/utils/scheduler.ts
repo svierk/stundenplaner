@@ -406,8 +406,11 @@ export function generateTimetable(
     }
   }
 
+  // Build set of subjects excluded from double staffing
+  const noDoubleStaffingIds = new Set(subjects.filter((s) => s.no_double_staffing).map((s) => s.id));
+
   // Try to assign double staffing for remaining teacher capacity
-  _assignDoubleStaffing(entries, teachers, teacherStates, warnings);
+  _assignDoubleStaffing(entries, teachers, teacherStates, noDoubleStaffingIds, warnings);
 
   return {
     timetable: {
@@ -424,10 +427,12 @@ function _assignDoubleStaffing(
   entries: Omit<TimetableEntry, "id" | "timetable_id">[],
   teachers: Teacher[],
   teacherStates: Map<number, TeacherState>,
+  noDoubleStaffingIds: Set<number>,
   warnings: string[],
 ) {
   for (const entry of entries) {
     if (entry.is_double_staffed) continue;
+    if (noDoubleStaffingIds.has(entry.subject_id)) continue;
 
     const availableTeachers = teachers
       .filter((t) => {

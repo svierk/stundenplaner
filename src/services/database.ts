@@ -19,20 +19,24 @@ let db: Database | null = null;
 export async function getDb(): Promise<Database> {
   if (!db) {
     db = await Database.load("sqlite:stundenplaner.db");
-    // Ensure tables added in later migrations exist even when the Rust binary
+    // Ensure schema additions from later migrations exist even when the Rust binary
     // hasn't been recompiled yet (e.g. after a frontend-only hot-reload).
     await db.execute(`CREATE TABLE IF NOT EXISTS subject_no_parallel_with (
-      subject_id     INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+      subject_id       INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
       other_subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
       PRIMARY KEY (subject_id, other_subject_id)
     )`);
+    // ALTER TABLE doesn't support IF NOT EXISTS in SQLite; catch the benign "duplicate column" error.
+    try {
+      await db.execute("ALTER TABLE subjects ADD COLUMN no_double_staffing INTEGER NOT NULL DEFAULT 0");
+    } catch { /* column already exists */ }
   }
   return db;
 }
 
 // ─── Subjects ────────────────────────────────────────────────────────────────
 
-type SubjectRow = { id: number; name: string; created_at: string; no_double_periods: number; no_parallel_classes: number };
+type SubjectRow = { id: number; name: string; created_at: string; no_double_periods: number; no_double_staffing: number; no_parallel_classes: number };
 type GradeConfigRow = {
   id: number;
   subject_id: number;
@@ -69,6 +73,7 @@ export async function getSubjects(): Promise<Subject[]> {
     name: r.name,
     created_at: r.created_at,
     no_double_periods: r.no_double_periods === 1,
+    no_double_staffing: r.no_double_staffing === 1,
     no_parallel_classes: r.no_parallel_classes === 1,
     no_parallel_subject_ids: Array.from(new Set([
       ...noParallelWith.filter((n) => n.subject_id === r.id).map((n) => n.other_subject_id),
@@ -91,8 +96,8 @@ export async function getSubjects(): Promise<Subject[]> {
 export async function createSubject(data: SubjectFormData): Promise<number> {
   const db = await getDb();
   const result = await db.execute(
-    "INSERT INTO subjects (name, no_double_periods, no_parallel_classes) VALUES (?,?,?)",
-    [data.name, data.no_double_periods ? 1 : 0, data.no_parallel_classes ? 1 : 0],
+    "INSERT INTO subjects (name, no_double_periods, no_double_staffing, no_parallel_classes) VALUES (?,?,?,?)",
+    [data.name, data.no_double_periods ? 1 : 0, data.no_double_staffing ? 1 : 0, data.no_parallel_classes ? 1 : 0],
   );
   const id = result.lastInsertId as number;
   await _saveSubjectRelations(db, id, data);
@@ -102,8 +107,8 @@ export async function createSubject(data: SubjectFormData): Promise<number> {
 export async function updateSubject(id: number, data: SubjectFormData): Promise<void> {
   const db = await getDb();
   await db.execute(
-    "UPDATE subjects SET name = ?, no_double_periods = ?, no_parallel_classes = ? WHERE id = ?",
-    [data.name, data.no_double_periods ? 1 : 0, data.no_parallel_classes ? 1 : 0, id],
+    "UPDATE subjects SET name = ?, no_double_periods = ?, no_double_staffing = ?, no_parallel_classes = ? WHERE id = ?",
+    [data.name, data.no_double_periods ? 1 : 0, data.no_double_staffing ? 1 : 0, data.no_parallel_classes ? 1 : 0, id],
   );
   await db.execute("DELETE FROM subject_grade_configs WHERE subject_id = ?", [id]);
   await db.execute("DELETE FROM subject_allowed_days WHERE subject_id = ?", [id]);

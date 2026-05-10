@@ -41,6 +41,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
   );
   const [allowedSlots, setAllowedSlots] = useState<number[]>(initial?.allowed_slots ?? []);
   const [noDoublePeriods, setNoDoublePeriods] = useState(initial?.no_double_periods ?? false);
+  const [noDoubleStaffing, setNoDoubleStaffing] = useState(initial?.no_double_staffing ?? false);
   const [noParallelClasses, setNoParallelClasses] = useState(initial?.no_parallel_classes ?? false);
   const [noParallelSubjectIds, setNoParallelSubjectIds] = useState<number[]>(
     initial?.no_parallel_subject_ids ?? [],
@@ -90,6 +91,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
         allowed_days: allowedDays,
         allowed_slots: allowedSlots,
         no_double_periods: noDoublePeriods,
+        no_double_staffing: noDoubleStaffing,
         no_parallel_classes: noParallelClasses,
         no_parallel_subject_ids: noParallelClasses ? noParallelSubjectIds : [],
       });
@@ -207,6 +209,15 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
               onCheckedChange={(v) => setNoDoublePeriods(!!v)}
             />
             <Label htmlFor="noDoublePeriods">Keine Doppelstunden</Label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="noDoubleStaffing"
+              checked={noDoubleStaffing}
+              onCheckedChange={(v) => setNoDoubleStaffing(!!v)}
+            />
+            <Label htmlFor="noDoubleStaffing">Keine Doppelbesetzung</Label>
           </div>
 
           <div className="space-y-2">
