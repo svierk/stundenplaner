@@ -71,6 +71,14 @@ export interface TeacherFormData {
   forbidden_subject_ids: number[];
 }
 
+// ─── Grade level config ───────────────────────────────────────────────────────
+
+export interface GradeLevelConfig {
+  grade_level: GradeLevel;
+  min_hours_per_day: number;
+  max_hours_per_day: number;
+}
+
 // ─── Classes ──────────────────────────────────────────────────────────────────
 
 export interface ClassSubject {
@@ -83,8 +91,6 @@ export interface SchoolClass {
   id: number;
   name: string;
   grade_level: GradeLevel;
-  hours_per_week: number;
-  max_hours_per_day: number;
   allow_free_periods: boolean;
   created_at: string;
   subjects: ClassSubject[];
@@ -93,8 +99,6 @@ export interface SchoolClass {
 export interface ClassFormData {
   name: string;
   grade_level: GradeLevel;
-  hours_per_week: number;
-  max_hours_per_day: number;
   allow_free_periods: boolean;
   subjects: ClassSubject[];
 }

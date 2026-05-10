@@ -8,6 +8,7 @@ import type {
   SubjectFormData,
   TeacherFormData,
   ClassFormData,
+  GradeLevelConfig,
   Timetable,
   TimetableEntry,
   GradeLevel,
@@ -237,14 +238,44 @@ async function _saveTeacherSubjects(db: Database, id: number, data: TeacherFormD
   }
 }
 
+// ─── Grade level configs ──────────────────────────────────────────────────────
+
+type GradeLevelConfigRow = {
+  grade_level: number;
+  min_hours_per_day: number;
+  max_hours_per_day: number;
+};
+
+export async function getGradeLevelConfigs(): Promise<GradeLevelConfig[]> {
+  const db = await getDb();
+  const rows = await db.select<GradeLevelConfigRow[]>(
+    "SELECT * FROM grade_level_configs ORDER BY grade_level",
+  );
+  return rows.map((r) => ({
+    grade_level: r.grade_level as GradeLevel,
+    min_hours_per_day: r.min_hours_per_day,
+    max_hours_per_day: r.max_hours_per_day,
+  }));
+}
+
+export async function upsertGradeLevelConfig(cfg: GradeLevelConfig): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `INSERT INTO grade_level_configs (grade_level, min_hours_per_day, max_hours_per_day)
+     VALUES (?, ?, ?)
+     ON CONFLICT(grade_level) DO UPDATE SET
+       min_hours_per_day = excluded.min_hours_per_day,
+       max_hours_per_day = excluded.max_hours_per_day`,
+    [cfg.grade_level, cfg.min_hours_per_day, cfg.max_hours_per_day],
+  );
+}
+
 // ─── Classes ──────────────────────────────────────────────────────────────────
 
 type ClassRow = {
   id: number;
   name: string;
   grade_level: number;
-  hours_per_week: number;
-  max_hours_per_day: number;
   allow_free_periods: number;
   created_at: string;
 };
@@ -272,8 +303,6 @@ export async function getClasses(): Promise<SchoolClass[]> {
     id: r.id,
     name: r.name,
     grade_level: r.grade_level as GradeLevel,
-    hours_per_week: r.hours_per_week,
-    max_hours_per_day: r.max_hours_per_day,
     allow_free_periods: r.allow_free_periods === 1,
     created_at: r.created_at,
     subjects: classSubjects
@@ -289,15 +318,8 @@ export async function getClasses(): Promise<SchoolClass[]> {
 export async function createClass(data: ClassFormData): Promise<number> {
   const db = await getDb();
   const result = await db.execute(
-    `INSERT INTO classes (name, grade_level, hours_per_week, max_hours_per_day, allow_free_periods)
-     VALUES (?,?,?,?,?)`,
-    [
-      data.name,
-      data.grade_level,
-      data.hours_per_week,
-      data.max_hours_per_day,
-      data.allow_free_periods ? 1 : 0,
-    ],
+    `INSERT INTO classes (name, grade_level, allow_free_periods) VALUES (?,?,?)`,
+    [data.name, data.grade_level, data.allow_free_periods ? 1 : 0],
   );
   const id = result.lastInsertId as number;
   await _saveClassSubjects(db, id, data.subjects);
@@ -307,16 +329,8 @@ export async function createClass(data: ClassFormData): Promise<number> {
 export async function updateClass(id: number, data: ClassFormData): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `UPDATE classes SET name=?, grade_level=?, hours_per_week=?, max_hours_per_day=?,
-     allow_free_periods=? WHERE id=?`,
-    [
-      data.name,
-      data.grade_level,
-      data.hours_per_week,
-      data.max_hours_per_day,
-      data.allow_free_periods ? 1 : 0,
-      id,
-    ],
+    `UPDATE classes SET name=?, grade_level=?, allow_free_periods=? WHERE id=?`,
+    [data.name, data.grade_level, data.allow_free_periods ? 1 : 0, id],
   );
   await db.execute("DELETE FROM class_subjects WHERE class_id = ?", [id]);
   await _saveClassSubjects(db, id, data.subjects);

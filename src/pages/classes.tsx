@@ -97,8 +97,6 @@ export function ClassesPage() {
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="text-left p-3 font-medium">Klasse</th>
                 <th className="text-left p-3 font-medium">Stufe</th>
-                <th className="text-left p-3 font-medium">Std/Wo</th>
-                <th className="text-left p-3 font-medium">Max/Tag</th>
                 <th className="text-left p-3 font-medium">Freistunden</th>
                 <th className="text-left p-3 font-medium">Fächer</th>
                 <th className="p-3 w-24"></th>
@@ -111,8 +109,6 @@ export function ClassesPage() {
                   <td className="p-3">
                     <Badge variant="secondary">Klasse {cls.grade_level}</Badge>
                   </td>
-                  <td className="p-3 text-muted-foreground">{cls.hours_per_week}</td>
-                  <td className="p-3 text-muted-foreground">{cls.max_hours_per_day}</td>
                   <td className="p-3 text-muted-foreground">
                     {cls.allow_free_periods ? "Ja" : "Nein"}
                   </td>

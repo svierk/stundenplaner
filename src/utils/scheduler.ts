@@ -6,6 +6,7 @@ import type {
   Weekday,
   SchedulerResult,
   GradeLevel,
+  GradeLevelConfig,
 } from "@/types";
 
 interface SlotKey {
@@ -90,10 +91,15 @@ export function generateTimetable(
   teachers: Teacher[],
   classes: SchoolClass[],
   subjects: Subject[],
+  gradeLevelConfigs: GradeLevelConfig[],
 ): SchedulerResult {
   const warnings: string[] = [];
   const entries: Omit<TimetableEntry, "id" | "timetable_id">[] = [];
   const MAX_SLOT = 8;
+
+  const maxHoursPerDayByGrade = new Map(
+    gradeLevelConfigs.map((c) => [c.grade_level, c.max_hours_per_day]),
+  );
 
   const subjectMap = new Map(subjects.map((s) => [s.id, s]));
 
@@ -163,7 +169,8 @@ export function generateTimetable(
       const candidateSlots: SlotKey[] = [];
       for (const day of shuffle(allowedDays)) {
         const dayCount = classState.slotsPerDay.get(day) ?? 0;
-        if (dayCount >= cls.max_hours_per_day) continue;
+        const maxPerDay = maxHoursPerDayByGrade.get(cls.grade_level) ?? 6;
+        if (dayCount >= maxPerDay) continue;
         for (const slot of shuffle(allowedSlots)) {
           if (classState.slots.has(slotKey(day, slot))) continue;
           candidateSlots.push({ day, slot });

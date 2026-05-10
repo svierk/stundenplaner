@@ -124,7 +124,7 @@ pub fn get_migrations() -> Vec<Migration> {
         },
         Migration {
             version: 5,
-            description: "simplify_subject_grade_configs",
+            description: "simplify_subject_grade_config",
             sql: "
                 CREATE TABLE subject_grade_configs_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,6 +137,36 @@ pub fn get_migrations() -> Vec<Migration> {
                     SELECT id, subject_id, grade_level, max_hours_per_week FROM subject_grade_configs;
                 DROP TABLE subject_grade_configs;
                 ALTER TABLE subject_grade_configs_new RENAME TO subject_grade_configs;
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "grade_level_configs_and_simplify_classes",
+            sql: "
+                CREATE TABLE IF NOT EXISTS grade_level_configs (
+                    grade_level INTEGER PRIMARY KEY,
+                    min_hours_per_day INTEGER NOT NULL DEFAULT 4,
+                    max_hours_per_day INTEGER NOT NULL DEFAULT 6
+                );
+                INSERT OR IGNORE INTO grade_level_configs (grade_level, min_hours_per_day, max_hours_per_day) VALUES (1, 4, 5);
+                INSERT OR IGNORE INTO grade_level_configs (grade_level, min_hours_per_day, max_hours_per_day) VALUES (2, 4, 5);
+                INSERT OR IGNORE INTO grade_level_configs (grade_level, min_hours_per_day, max_hours_per_day) VALUES (3, 5, 6);
+                INSERT OR IGNORE INTO grade_level_configs (grade_level, min_hours_per_day, max_hours_per_day) VALUES (4, 5, 6);
+
+                PRAGMA foreign_keys = OFF;
+                CREATE TABLE classes_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    grade_level INTEGER NOT NULL DEFAULT 1 CHECK(grade_level BETWEEN 1 AND 4),
+                    allow_free_periods INTEGER NOT NULL DEFAULT 0 CHECK(allow_free_periods IN (0,1)),
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                INSERT INTO classes_new (id, name, grade_level, allow_free_periods, created_at)
+                    SELECT id, name, grade_level, allow_free_periods, created_at FROM classes;
+                DROP TABLE classes;
+                ALTER TABLE classes_new RENAME TO classes;
+                PRAGMA foreign_keys = ON;
             ",
             kind: MigrationKind::Up,
         },

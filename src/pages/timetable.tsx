@@ -17,6 +17,7 @@ import { useSubjectStore } from "@/stores/subject-store";
 import { useTeacherStore } from "@/stores/teacher-store";
 import { useClassStore } from "@/stores/class-store";
 import { useTimetableStore } from "@/stores/timetable-store";
+import { useGradeLevelStore } from "@/stores/grade-level-store";
 import { useToast } from "@/hooks/use-toast";
 import { generateTimetable } from "@/utils/scheduler";
 import { exportTimetableToExcel } from "@/utils/excel-export";
@@ -28,6 +29,7 @@ export function TimetablePage() {
   const { teachers, fetch: fetchTeachers } = useTeacherStore();
   const { classes, fetch: fetchClasses } = useClassStore();
   const { timetables, activeTimetable, loading, fetch: fetchTimetables, save: saveTimetable, remove, setActive } = useTimetableStore();
+  const { configs: gradeLevelConfigs, fetch: fetchGradeLevelConfigs } = useGradeLevelStore();
   const { toast } = useToast();
 
   const [generating, setGenerating] = useState(false);
@@ -42,7 +44,8 @@ export function TimetablePage() {
     fetchTeachers();
     fetchClasses();
     fetchTimetables();
-  }, [fetchSubjects, fetchTeachers, fetchClasses, fetchTimetables]);
+    fetchGradeLevelConfigs();
+  }, [fetchSubjects, fetchTeachers, fetchClasses, fetchTimetables, fetchGradeLevelConfigs]);
 
   const handleGenerate = async () => {
     if (teachers.length === 0 || classes.length === 0 || subjects.length === 0) {
@@ -56,7 +59,7 @@ export function TimetablePage() {
 
     setGenerating(true);
     try {
-      const result = generateTimetable(teachers, classes, subjects);
+      const result = generateTimetable(teachers, classes, subjects, gradeLevelConfigs);
       setWarnings(result.warnings);
 
       const id = await saveTimetable(result.timetable.name, schoolYear, result.entries);

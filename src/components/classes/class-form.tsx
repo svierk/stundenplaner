@@ -31,8 +31,6 @@ interface ClassFormProps {
 export function ClassForm({ open, onClose, onSubmit, initial, subjects }: ClassFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [gradeLevel, setGradeLevel] = useState<GradeLevel>(initial?.grade_level ?? 1);
-  const [hoursPerWeek, setHoursPerWeek] = useState(initial?.hours_per_week ?? 25);
-  const [maxHoursPerDay, setMaxHoursPerDay] = useState(initial?.max_hours_per_day ?? 6);
   const [allowFreePeriods, setAllowFreePeriods] = useState(initial?.allow_free_periods ?? false);
   const [classSubjects, setClassSubjects] = useState<{ subject_id: number; hours_per_week: number }[]>(
     initial?.subjects.map((s) => ({ subject_id: s.subject_id, hours_per_week: s.hours_per_week })) ?? [],
@@ -60,8 +58,6 @@ export function ClassForm({ open, onClose, onSubmit, initial, subjects }: ClassF
       await onSubmit({
         name: name.trim(),
         grade_level: gradeLevel,
-        hours_per_week: hoursPerWeek,
-        max_hours_per_day: maxHoursPerDay,
         allow_free_periods: allowFreePeriods,
         subjects: classSubjects,
       });
@@ -114,29 +110,6 @@ export function ClassForm({ open, onClose, onSubmit, initial, subjects }: ClassF
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Stunden pro Woche</Label>
-              <Input
-                type="number"
-                min={1}
-                max={40}
-                value={hoursPerWeek}
-                onChange={(e) => setHoursPerWeek(Number(e.target.value))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Max. Stunden pro Tag</Label>
-              <Input
-                type="number"
-                min={1}
-                max={10}
-                value={maxHoursPerDay}
-                onChange={(e) => setMaxHoursPerDay(Number(e.target.value))}
-              />
             </div>
           </div>
 
