@@ -89,9 +89,6 @@ export function TeachersPage() {
     }
   });
 
-  const getSubjectNames = (ids: number[]) =>
-    ids.map((id) => subjects.find((s) => s.id === id)?.name).filter(Boolean);
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -125,13 +122,12 @@ export function TeachersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                <SortHeader label="Name"         sortKey="name"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Kürzel"       sortKey="abbr"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Std/Wo"       sortKey="hours"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Erl. Fächer"  sortKey="core"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Freier Tag"   sortKey="freeDay" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Klasse"       sortKey="class"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Zusatzaufgabe" sortKey="duty"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Name"          sortKey="name"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Kürzel"        sortKey="abbr"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Klasse"        sortKey="class"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Std/Wo"        sortKey="hours"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Zusatzaufgabe" sortKey="duty"    currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Freier Tag"    sortKey="freeDay" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
                 <th className="p-3 w-24"></th>
               </tr>
             </thead>
@@ -147,20 +143,21 @@ export function TeachersPage() {
                   <td className="p-3">
                     <Badge variant="secondary">{teacher.abbreviation}</Badge>
                   </td>
-                  <td className="p-3 text-muted-foreground">{teacher.hours_per_week}</td>
-                  <td className="p-3">
-                    <div className="flex gap-1 flex-wrap">
-                      {getSubjectNames(teacher.allowed_subjects.map((a) => a.subject_id)).slice(0, 3).map((name) => (
-                        <Badge key={name} variant="default" className="text-xs">
-                          {name}
-                        </Badge>
-                      ))}
-                      {teacher.allowed_subjects.length > 3 && (
-                        <Badge variant="outline" className="text-xs">
-                          +{teacher.allowed_subjects.length - 3}
-                        </Badge>
-                      )}
-                    </div>
+                  <td className="p-3 text-muted-foreground">
+                    {teacher.own_class_name ?? "–"}
+                  </td>
+                  <td className="p-3 text-muted-foreground">
+                    {teacher.hours_per_week}h
+                    {teacher.additional_duty_hours > 0 && (
+                      <span className="ml-1">
+                        ({teacher.hours_per_week - teacher.additional_duty_hours}h)
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-3 text-muted-foreground">
+                    {teacher.additional_duty_name
+                      ? `${teacher.additional_duty_name} (${teacher.additional_duty_hours}h)`
+                      : "–"}
                   </td>
                   <td className="p-3 text-muted-foreground">
                     {teacher.has_free_day
@@ -168,14 +165,6 @@ export function TeachersPage() {
                           .map((d) => WEEKDAYS.find((w) => w.value === d)?.short)
                           .join(", ") || "Ja"
                       : "Nein"}
-                  </td>
-                  <td className="p-3 text-muted-foreground">
-                    {teacher.own_class_name ?? "–"}
-                  </td>
-                  <td className="p-3 text-muted-foreground">
-                    {teacher.additional_duty_name
-                      ? `${teacher.additional_duty_name} (${teacher.additional_duty_hours}h)`
-                      : "–"}
                   </td>
                   <td className="p-3">
                     <div className="flex gap-1 justify-end">

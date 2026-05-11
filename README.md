@@ -1,4 +1,4 @@
-# Stundenplaner
+# 🏫 Stundenplaner
 
 **Dynamischer Stundenplan-Generator für Grundschulen**
 
