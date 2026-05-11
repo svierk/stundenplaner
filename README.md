@@ -4,7 +4,9 @@
 
 Eine Desktop-Anwendung zur automatischen Erstellung von Wochenstundenplänen für Grundschulen. Fächer, Lehrkräfte und Klassen einmalig konfigurieren – die App erstellt einen optimierten Stundenplan und exportiert ihn nach Excel.
 
----
+## Vorschau
+
+<img src="./preview.png" alt="preview" width="700">
 
 ## Funktionen
 
