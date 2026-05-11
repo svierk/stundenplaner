@@ -8,17 +8,18 @@ Eine Desktop-Anwendung zur automatischen Erstellung von Wochenstundenplänen fü
 
 ## Funktionen
 
-- **Fachverwaltung** – Fächer mit klassenspezifischen Min./Max.-Stunden, erlaubten Wochentagen und Stundenbeschränkungen konfigurieren
-- **Lehrerverwaltung** – Lehrerprofile mit Kernfächern, erlaubten/verbotenen Fächern, Wochenstunden, Freitage-Präferenzen und Klassenlehrerzuweisungen pflegen
-- **Klassenverwaltung** – Klassen mit Klassenstufe, Wochenstunden, Max. Tagesstunden und Fachzuweisungen anlegen
+- **Fachverwaltung** – Fächer mit Kategorie (Hauptfach, Nebenfach, AG), klassenstufenspezifischen Wochenstunden, erlaubten Wochentagen und Stundenbeschränkungen konfigurieren; Einschränkungen wie Keine Doppelstunden, Keine Doppelbesetzung und Kein Parallelunterricht festlegen
+- **Lehrkräfteverwaltung** – Lehrkraftprofile mit erlaubten Fächern (inkl. optionaler Klasseneinschränkung), nicht erlaubten Fächern, Wochenstunden, Zusatzaufgaben, freien Tagen, freien Stunden und Klassenleitungszuweisungen pflegen
+- **Klassenverwaltung** – Klassen mit Klassenstufe und Freistunden-Option anlegen; Min./Max.-Stunden pro Tag klassenstufenübergreifend konfigurieren
 - **Automatische Stundenplanerstellung** – Constraint-basierter Algorithmus, der alle konfigurierten Regeln berücksichtigt:
-  - Lehrerverfügbarkeit und Fachkompetenz
-  - Freitage-Einschränkungen pro Lehrer
-  - Maximale Stunden pro Tag und Klasse
-  - Fach-Wochentag- und Stunden-Beschränkungen
-  - Minimierung von Freistunden im Lehrerplan
-  - Optionale Doppelbesetzung bei verfügbarer Lehrerkapazität
-- **Excel-Export** – Klassenweise Stundenplandateien sowie Lehrerübersicht und individuelle Lehrerpläne
+  - Lehrkraftverfügbarkeit und Fachkompetenz (priorisierte Zuordnung: designierte Klasse → allgemein erlaubt → Fallback)
+  - Freitage- und Freistunden-Einschränkungen pro Lehrkraft
+  - Min./Max.-Stunden pro Tag und Klasse
+  - Fach-Wochentag- und Stundenbeschränkungen
+  - Keine Doppelstunden und kein Parallelunterricht (auch fächerübergreifend)
+  - Optionale Doppelbesetzung bei verfügbarer Lehrkraftkapazität (ausschließbar pro Fach)
+  - Minimierung von Freistunden im Klassenprogramm
+- **Excel-Export** – Klassenweise Stundenplandateien sowie Lehrkraftübersicht und individuelle Lehrkraftpläne
 - **Datenbankimport/-export** – Vollständige SQLite-Datenbanksicherung und -wiederherstellung
 
 ---
@@ -86,9 +87,9 @@ npm run tauri build
 
 ## Arbeitsablauf
 
-1. **Fächer konfigurieren** – Alle Schulfächer mit Klassenstufenbeschränkungen anlegen
-2. **Lehrkräfte konfigurieren** – Alle Lehrer mit Fachkompetenzen und Verfügbarkeiten anlegen
-3. **Klassen konfigurieren** – Klassen anlegen und Fächer mit gewünschten Wochenstunden zuweisen
+1. **Fächer konfigurieren** – Alle Schulfächer mit Kategorie, Klassenstufenstunden und Einschränkungen anlegen
+2. **Lehrkräfte konfigurieren** – Alle Lehrkräfte mit Fachkompetenzen, Verfügbarkeiten und Zusatzaufgaben anlegen
+3. **Klassen konfigurieren** – Klassen anlegen und Min./Max.-Stunden pro Tag klassenstufenweise festlegen
 4. **Stundenplan erstellen** – Auf „Stundenplan generieren" auf der Stundenplanseite klicken
 5. **Prüfen & Exportieren** – Den erstellten Stundenplan prüfen und nach Excel exportieren
 
@@ -103,7 +104,7 @@ stundenplaner/
 │   │   ├── ui/                   # Wiederverwendbare UI-Primitives
 │   │   ├── layout/               # App-Shell (Sidebar, Layout)
 │   │   ├── subjects/             # Fachformular-Komponenten
-│   │   ├── teachers/             # Lehrerformular-Komponenten
+│   │   ├── teachers/             # Lehrkraftformular-Komponenten
 │   │   └── classes/              # Klassenformular-Komponenten
 │   ├── pages/                    # Routen-Seitenkomponenten
 │   ├── services/                 # Datenbankzugriffsschicht
