@@ -311,23 +311,18 @@ export function TimetablePage() {
                       maxSlot={maxSlot}
                       getCellClass={(day, slot) => {
                         const e = entries.find((e) => e.day === day && e.slot === slot);
-                        return e?.is_double_staffed
+                        const isSecondary = e?.is_double_staffed && e.second_teacher_abbreviation === teacher.abbreviation;
+                        return isSecondary
                           ? "bg-emerald-50 border border-emerald-300"
                           : "bg-primary/10 border border-primary/20";
                       }}
                       renderCell={(day, slot) => {
                         const e = entries.find((e) => e.day === day && e.slot === slot);
                         if (!e) return null;
-                        const isSecondary = e.second_teacher_abbreviation === teacher.abbreviation;
                         return (
                           <>
                             <div className="font-medium">{e.subject_name}</div>
-                            <div className="text-muted-foreground">
-                              {e.class_name}
-                              {isSecondary && (
-                                <span className="text-emerald-700"> (2.)</span>
-                              )}
-                            </div>
+                            <div className="text-muted-foreground">{e.class_name}</div>
                           </>
                         );
                       }}
