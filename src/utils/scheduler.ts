@@ -139,6 +139,26 @@ function countTeacherFreePeriods(teacherState: TeacherState): number {
   return freePeriods;
 }
 
+/**
+ * Scores placing a lesson at (day, slot) for a teacher from a gap-avoidance perspective.
+ * 0 = extends or fills an existing block on that day (best)
+ * 1 = teacher has no lessons on that day yet (neutral — new day, no gap created)
+ * 2 = would create an intra-day gap (worst)
+ */
+function teacherSlotGapScore(state: TeacherState | null, day: Weekday, slot: number): number {
+  if (!state) return 1;
+  const daySlots: number[] = [];
+  for (const key of state.busySlots) {
+    const [d, s] = key.split("-").map(Number);
+    if (d === day) daySlots.push(s);
+  }
+  if (daySlots.length === 0) return 1;
+  const min = Math.min(...daySlots);
+  const max = Math.max(...daySlots);
+  if (slot === min - 1 || slot === max + 1 || (slot > min && slot < max)) return 0;
+  return 2;
+}
+
 export function generateTimetable(
   teachers: Teacher[],
   classes: SchoolClass[],
@@ -243,22 +263,46 @@ export function generateTimetable(
     const csKey = `${cls.id}-${subject.id}`;
 
     while (remaining > 0) {
-      // Bug 3 fix: read the lock inside the loop so it takes effect from the 2nd hour onward
+      // Read the lock inside the loop so it takes effect from the 2nd hour onward
       const lockedTeacherId = classSubjectTeacher.get(csKey);
       let placed = false;
 
+      // Determine which teacher state to use for gap-avoidance scoring.
+      // If a teacher is already locked for this class+subject, use their state.
+      // Otherwise pick the most likely candidate (highest priority, has capacity).
+      const gapScoringState: TeacherState | null = lockedTeacherId !== undefined
+        ? (teacherStates.get(lockedTeacherId) ?? null)
+        : (() => {
+            const best = teachers
+              .filter((t) => canTeachSubject(t, subject.id) && effectiveHours(t) > (teacherStates.get(t.id)?.assignedHours ?? 0))
+              .sort((a, b) => teacherSubjectPriority(a, subject.id, cls.id) - teacherSubjectPriority(b, subject.id, cls.id))[0];
+            return best ? (teacherStates.get(best.id) ?? null) : null;
+          })();
+
       // Build candidate (day, slot) pairs.
       // Day priority: started-but-below-min (0) → empty (1) → at-or-above-min (2).
-      // Within the same group, prefer the day with fewer total lessons.
-      // Pre-shuffle provides random tiebreaking within equal counts.
+      // Within the same group, prefer days where the scoring teacher already has adjacent
+      // lessons (gap score 0) over new days (1) over gap-creating placements (2),
+      // then the day with fewer total lessons as a tiebreaker.
+      // Pre-shuffle provides random tiebreaking within fully equal slots.
       const orderedDays = shuffle(allowedDays).sort((a, b) => {
         const ca = classState.slotsPerDay.get(a) ?? 0;
         const cb = classState.slotsPerDay.get(b) ?? 0;
         const ga = ca === 0 ? 1 : ca < gradeMinSlot ? 0 : 2;
         const gb = cb === 0 ? 1 : cb < gradeMinSlot ? 0 : 2;
         if (ga !== gb) return ga - gb;
+        // Within same class-day group, prefer days that keep the teacher's schedule compact.
+        // For contiguous classes, the candidate slot on each day is always dayCount+1.
+        const nextSlotA = !cls.allow_free_periods ? ca + 1 : -1;
+        const nextSlotB = !cls.allow_free_periods ? cb + 1 : -1;
+        if (nextSlotA > 0 && nextSlotB > 0) {
+          const tgA = teacherSlotGapScore(gapScoringState, a, nextSlotA);
+          const tgB = teacherSlotGapScore(gapScoringState, b, nextSlotB);
+          if (tgA !== tgB) return tgA - tgB;
+        }
         return ca - cb;
       });
+
       const candidateSlots: SlotKey[] = [];
       for (const day of orderedDays) {
         const dayCount = classState.slotsPerDay.get(day) ?? 0;
@@ -281,7 +325,7 @@ export function generateTimetable(
         };
 
         if (!cls.allow_free_periods) {
-          // Bug 2 fix: enforce contiguous scheduling — only the next consecutive slot is valid
+          // Enforce contiguous scheduling — only the next consecutive slot is valid
           const nextSlot = dayCount + 1;
           const sk = slotKey(day, nextSlot);
           if (
@@ -294,14 +338,36 @@ export function generateTimetable(
             candidateSlots.push({ day, slot: nextSlot });
           }
         } else {
-          for (const slot of shuffle(allowedSlots)) {
+          // Collect valid slots, shuffle for randomness, then sort by teacher gap score so
+          // slots adjacent to the teacher's existing block on that day are tried first.
+          const daySlots = shuffle(allowedSlots).filter((slot) => {
             const sk = slotKey(day, slot);
-            if (classState.slots.has(sk)) continue;
-            if (wouldViolateDoublePeriodRule(subjectSlotsOnDay, slot, subject.no_double_periods)) continue;
-            if (isParallelBlocked(sk)) continue;
+            return (
+              !classState.slots.has(sk) &&
+              !wouldViolateDoublePeriodRule(subjectSlotsOnDay, slot, subject.no_double_periods) &&
+              !isParallelBlocked(sk)
+            );
+          });
+          daySlots.sort((a, b) =>
+            teacherSlotGapScore(gapScoringState, day, a) - teacherSlotGapScore(gapScoringState, day, b),
+          );
+          for (const slot of daySlots) {
             candidateSlots.push({ day, slot });
           }
         }
+      }
+
+      // Final sort for free-period classes: across all days, prefer slots that keep the
+      // teacher's schedule compact, while still respecting the class-day group ordering.
+      if (cls.allow_free_periods) {
+        candidateSlots.sort((a, b) => {
+          const ca = classState.slotsPerDay.get(a.day) ?? 0;
+          const cb = classState.slotsPerDay.get(b.day) ?? 0;
+          const ga = ca === 0 ? 1 : ca < gradeMinSlot ? 0 : 2;
+          const gb = cb === 0 ? 1 : cb < gradeMinSlot ? 0 : 2;
+          if (ga !== gb) return ga - gb;
+          return teacherSlotGapScore(gapScoringState, a.day, a.slot) - teacherSlotGapScore(gapScoringState, b.day, b.slot);
+        });
       }
 
       // If a teacher is locked for this class+subject, only consider them.
@@ -445,7 +511,15 @@ function _assignDoubleStaffing(
         if (ts.busySlots.has(slotKey(entry.day, entry.slot))) return false;
         return true;
       })
-      .sort((a, b) => teacherSubjectPriority(a, entry.subject_id, entry.class_id) - teacherSubjectPriority(b, entry.subject_id, entry.class_id));
+      .sort((a, b) => {
+        const prioA = teacherSubjectPriority(a, entry.subject_id, entry.class_id);
+        const prioB = teacherSubjectPriority(b, entry.subject_id, entry.class_id);
+        if (prioA !== prioB) return prioA - prioB;
+        // Prefer teacher for whom this slot extends an existing block
+        const gapA = teacherSlotGapScore(teacherStates.get(a.id)!, entry.day as Weekday, entry.slot);
+        const gapB = teacherSlotGapScore(teacherStates.get(b.id)!, entry.day as Weekday, entry.slot);
+        return gapA - gapB;
+      });
 
     if (availableTeachers.length > 0) {
       const secondTeacher = availableTeachers[0];
