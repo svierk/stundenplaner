@@ -269,6 +269,14 @@ export function generateTimetable(
   // Tracks which teacher is locked in for each (class, subject) pair
   const classSubjectTeacher = new Map<string, number>();
 
+  // Rank classes deterministically for staggered start/end times.
+  // Each class alternates its preferred start slot (1 or 2) per day based on
+  // (rank + day) parity, so adjacent classes have complementary schedules.
+  const classRank = new Map<number, number>();
+  [...classes]
+    .sort((a, b) => a.grade_level !== b.grade_level ? a.grade_level - b.grade_level : a.name.localeCompare(b.name))
+    .forEach((c, i) => classRank.set(c.id, i));
+
   for (const assignment of assignments) {
     const { cls, subject } = assignment;
     let remaining = assignment.remaining;
@@ -347,9 +355,11 @@ export function generateTimetable(
           const ga = nonAgA === 0 ? 1 : nonAgA < gradeMinSlot ? 0 : 2;
           const gb = nonAgB === 0 ? 1 : nonAgB < gradeMinSlot ? 0 : 2;
           if (ga !== gb) return ga - gb;
-          const nextSlotA = !cls.allow_free_periods ? totalA + 1 : -1;
-          const nextSlotB = !cls.allow_free_periods ? totalB + 1 : -1;
-          if (nextSlotA > 0 && nextSlotB > 0) {
+          if (!cls.allow_free_periods) {
+            const rv = classRank.get(cls.id) ?? 0;
+            const cs = gradeMaxSlot - gradeMinSlot >= 1;
+            const nextSlotA = totalA + ((cs && (rv + (a as number)) % 2 === 0) ? 2 : 1);
+            const nextSlotB = totalB + ((cs && (rv + (b as number)) % 2 === 0) ? 2 : 1);
             const tgA = teacherSlotGapScore(gapScoringState, a, nextSlotA);
             const tgB = teacherSlotGapScore(gapScoringState, b, nextSlotB);
             if (tgA !== tgB) return tgA - tgB;
@@ -376,9 +386,15 @@ export function generateTimetable(
             return false;
           };
 
+          // Staggered start: even (rank+day) parity → prefer slot 2, odd → slot 1.
+          // Only stagger when max > min so the minimum lesson count per day is still reachable.
+          const rankVal = classRank.get(cls.id) ?? 0;
+          const canStagger = gradeMaxSlot - gradeMinSlot >= 1;
+          const startSlotForDay = (canStagger && (rankVal + (day as number)) % 2 === 0) ? 2 : 1;
+
           if (!cls.allow_free_periods) {
             // Enforce contiguous scheduling — only the next consecutive slot is valid
-            const nextSlot = totalDayCount + 1;
+            const nextSlot = startSlotForDay + totalDayCount;
             const sk = slotKey(day, nextSlot);
             if (
               nextSlot <= gradeMaxSlot &&
@@ -399,9 +415,14 @@ export function generateTimetable(
                 !isParallelBlocked(sk)
               );
             });
-            daySlots.sort((a, b) =>
-              teacherSlotGapScore(gapScoringState, day, a) - teacherSlotGapScore(gapScoringState, day, b),
-            );
+            daySlots.sort((slotA, slotB) => {
+              const gapA = teacherSlotGapScore(gapScoringState, day, slotA);
+              const gapB = teacherSlotGapScore(gapScoringState, day, slotB);
+              if (gapA !== gapB) return gapA - gapB;
+              // When placing the first lesson on a day, bias toward startSlotForDay
+              if (totalDayCount === 0) return Math.abs(slotA - startSlotForDay) - Math.abs(slotB - startSlotForDay);
+              return 0;
+            });
             for (const slot of daySlots) candidateSlots.push({ day, slot });
           }
         }

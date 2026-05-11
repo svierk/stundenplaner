@@ -137,7 +137,9 @@ describe("generateTimetable", () => {
     }
     for (const [, slots] of byDay) {
       const sorted = slots.sort((a, b) => a - b);
-      expect(sorted[0]).toBe(1);
+      // First slot is 1 or 2 (stagger offset), sequence must be contiguous with no gaps
+      expect(sorted[0]).toBeGreaterThanOrEqual(1);
+      expect(sorted[0]).toBeLessThanOrEqual(2);
       for (let i = 1; i < sorted.length; i++) {
         expect(sorted[i]).toBe(sorted[i - 1] + 1);
       }
