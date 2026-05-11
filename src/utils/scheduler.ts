@@ -414,7 +414,7 @@ export function generateTimetable(
 
   return {
     timetable: {
-      name: `Stundenplan ${new Date().toLocaleDateString("de-DE")}`,
+      name: "",
       generated_at: new Date().toISOString(),
       school_year: "",
     },

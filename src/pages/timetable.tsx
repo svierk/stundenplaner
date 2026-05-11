@@ -62,7 +62,12 @@ export function TimetablePage() {
       const result = generateTimetable(teachers, classes, subjects, gradeLevelConfigs);
       setWarnings(result.warnings);
 
-      const id = await saveTimetable(result.timetable.name, schoolYear, result.entries);
+      const now = new Date();
+      const date = now.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+      const time = now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+      const name = `Stundenplan ${schoolYear} (erstellt am ${date} ${time})`;
+
+      const id = await saveTimetable(name, schoolYear, result.entries);
       // saveTimetable calls fetch() internally — read from live store state, not the stale closure
       const fresh = useTimetableStore.getState().timetables.find((t) => t.id === id);
       if (fresh) setActive(fresh);
@@ -167,7 +172,7 @@ export function TimetablePage() {
               <SelectItem value="none">– Keinen auswählen –</SelectItem>
               {timetables.map((t) => (
                 <SelectItem key={t.id} value={t.id.toString()}>
-                  {t.name} ({t.school_year})
+                  {t.name}
                 </SelectItem>
               ))}
             </SelectContent>
