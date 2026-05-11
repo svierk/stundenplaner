@@ -15,17 +15,27 @@ export const MAX_SLOTS_PER_DAY = 6;
 
 // ─── Subjects ────────────────────────────────────────────────────────────────
 
+export type SubjectCategory = "main" | "minor" | "activity";
+
+export const SUBJECT_CATEGORIES: { value: SubjectCategory; label: string }[] = [
+  { value: "main", label: "Hauptfach" },
+  { value: "minor", label: "Nebenfach" },
+  { value: "activity", label: "AG" },
+];
+
 export interface SubjectGradeConfig {
   id?: number;
   subject_id: number;
   grade_level: GradeLevel;
   hours_per_week: number;
+  category_override?: SubjectCategory;
 }
 
 export interface Subject {
   id: number;
   name: string;
   created_at: string;
+  category: SubjectCategory;
   grade_configs: SubjectGradeConfig[];
   allowed_days: Weekday[];
   allowed_slots: number[];
@@ -37,7 +47,8 @@ export interface Subject {
 
 export interface SubjectFormData {
   name: string;
-  grade_configs: { grade_level: GradeLevel; hours_per_week: number }[];
+  category: SubjectCategory;
+  grade_configs: { grade_level: GradeLevel; hours_per_week: number; category_override?: SubjectCategory }[];
   allowed_days: Weekday[];
   allowed_slots: number[];
   no_double_periods: boolean;

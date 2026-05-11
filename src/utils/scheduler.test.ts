@@ -13,6 +13,7 @@ const makeSubject = (id: number, name: string, gradeLevel: 1 | 2 | 3 | 4 = 1): S
   id,
   name,
   created_at: "",
+  category: "minor",
   grade_configs: [{ id, subject_id: id, grade_level: gradeLevel, hours_per_week: 4 }],
   allowed_days: [],
   allowed_slots: [],

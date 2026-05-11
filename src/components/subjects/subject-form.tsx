@@ -10,8 +10,15 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import type { Subject, SubjectFormData, Weekday, GradeLevel } from "@/types";
-import { WEEKDAYS, GRADE_LEVELS, MAX_SLOTS_PER_DAY } from "@/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { Subject, SubjectFormData, Weekday, GradeLevel, SubjectCategory } from "@/types";
+import { WEEKDAYS, GRADE_LEVELS, MAX_SLOTS_PER_DAY, SUBJECT_CATEGORIES } from "@/types";
 
 interface SubjectFormProps {
   open: boolean;
@@ -24,15 +31,18 @@ interface SubjectFormProps {
 const defaultGradeConfig = (grade: GradeLevel) => ({
   grade_level: grade,
   hours_per_week: 0,
+  category_override: undefined as SubjectCategory | undefined,
 });
 
 export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: SubjectFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
+  const [category, setCategory] = useState<SubjectCategory>(initial?.category ?? "minor");
   const [gradeConfigs, setGradeConfigs] = useState(
     initial?.grade_configs.length
       ? initial.grade_configs.map((g) => ({
           grade_level: g.grade_level,
           hours_per_week: g.hours_per_week,
+          category_override: g.category_override,
         }))
       : GRADE_LEVELS.map(defaultGradeConfig),
   );
@@ -73,6 +83,12 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
     );
   };
 
+  const updateGradeCategoryOverride = (grade: GradeLevel, value: SubjectCategory | undefined) => {
+    setGradeConfigs((prev) =>
+      prev.map((gc) => (gc.grade_level === grade ? { ...gc, category_override: value } : gc)),
+    );
+  };
+
   const toggleGrade = (grade: GradeLevel) => {
     setGradeConfigs((prev) => {
       const exists = prev.some((g) => g.grade_level === grade);
@@ -87,6 +103,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
     try {
       await onSubmit({
         name: name.trim(),
+        category,
         grade_configs: gradeConfigs,
         allowed_days: allowedDays,
         allowed_slots: allowedSlots,
@@ -111,13 +128,28 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
         </DialogHeader>
 
         <div className="space-y-5">
-          <div className="space-y-1.5">
-            <Label>Fachname</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="z.B. Deutsch"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Fachname</Label>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="z.B. Deutsch"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Kategorie</Label>
+              <Select value={category} onValueChange={(v) => setCategory(v as SubjectCategory)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SUBJECT_CATEGORIES.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -129,6 +161,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
                     <th className="text-left p-2 font-medium w-10">Aktiv</th>
                     <th className="text-left p-2 font-medium">Klasse</th>
                     <th className="text-left p-2 font-medium">Std/Woche</th>
+                    <th className="text-left p-2 font-medium">Kategorie</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -154,6 +187,30 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
                             onChange={(e) => updateGradeConfig(grade, Number(e.target.value))}
                             className="w-20"
                           />
+                        </td>
+                        <td className="p-2">
+                          <Select
+                            disabled={!active}
+                            value={config?.category_override ?? "inherit"}
+                            onValueChange={(v) =>
+                              updateGradeCategoryOverride(
+                                grade,
+                                v === "inherit" ? undefined : v as SubjectCategory,
+                              )
+                            }
+                          >
+                            <SelectTrigger className="w-32">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="inherit">
+                                <span className="text-muted-foreground">Standard</span>
+                              </SelectItem>
+                              {SUBJECT_CATEGORIES.map((c) => (
+                                <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </td>
                       </tr>
                     );

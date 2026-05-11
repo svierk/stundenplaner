@@ -6,8 +6,22 @@ import { SubjectForm } from "@/components/subjects/subject-form";
 import { useSubjectStore } from "@/stores/subject-store";
 import { useToast } from "@/hooks/use-toast";
 import { SortHeader } from "@/components/ui/sort-header";
-import { WEEKDAYS } from "@/types";
+import { SUBJECT_CATEGORIES } from "@/types";
 import type { Subject } from "@/types";
+
+function CategoryBadge({ category }: { category: import("@/types").SubjectCategory }) {
+  const label = SUBJECT_CATEGORIES.find((c) => c.value === category)?.label ?? category;
+  const styles: Record<string, string> = {
+    main:     "bg-blue-100 text-blue-800 border-blue-200",
+    minor:    "bg-gray-100 text-gray-700 border-gray-200",
+    activity: "bg-purple-100 text-purple-800 border-purple-200",
+  };
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${styles[category] ?? styles.minor}`}>
+      {label}
+    </span>
+  );
+}
 
 export function SubjectsPage() {
   const { subjects, loading, fetch, create, update, remove } = useSubjectStore();
@@ -25,15 +39,10 @@ export function SubjectsPage() {
   const sorted = [...subjects].sort((a, b) => {
     const dir = sortDir === "asc" ? 1 : -1;
     switch (sortKey) {
-      case "name":    return a.name.localeCompare(b.name) * dir;
-      case "grades":  return (a.grade_configs.length - b.grade_configs.length) * dir;
-      case "hours":   return (
-        a.grade_configs.reduce((s, g) => s + g.hours_per_week, 0) -
-        b.grade_configs.reduce((s, g) => s + g.hours_per_week, 0)
-      ) * dir;
-      case "days":    return (a.allowed_days.length - b.allowed_days.length) * dir;
-      case "slots":   return (a.allowed_slots.length - b.allowed_slots.length) * dir;
-      default:        return 0;
+      case "name":     return a.name.localeCompare(b.name) * dir;
+      case "grades":   return (a.grade_configs.length - b.grade_configs.length) * dir;
+      case "category": return a.category.localeCompare(b.category) * dir;
+      default:         return 0;
     }
   });
 
@@ -116,11 +125,9 @@ export function SubjectsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                <SortHeader label="Fach"         sortKey="name"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Klassenstufen" sortKey="grades" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Std/Woche"    sortKey="hours"  currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Tage"         sortKey="days"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Stunden"      sortKey="slots"  currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Fach"          sortKey="name"     currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Klassenstufen" sortKey="grades"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Kategorie"     sortKey="category" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} />
                 <th className="p-3 w-24"></th>
               </tr>
             </thead>
@@ -133,26 +140,17 @@ export function SubjectsPage() {
                       {subject.grade_configs.map((gc) => (
                         <Badge key={gc.grade_level} variant="secondary">
                           Kl. {gc.grade_level}
+                          {gc.category_override && (
+                            <span className="ml-1 opacity-60">
+                              ({SUBJECT_CATEGORIES.find((c) => c.value === gc.category_override)?.label})
+                            </span>
+                          )}
                         </Badge>
                       ))}
                     </div>
                   </td>
-                  <td className="p-3 text-muted-foreground">
-                    {subject.grade_configs.length > 0
-                      ? subject.grade_configs.map((gc) => `${gc.hours_per_week}`).join(", ")
-                      : "–"}
-                  </td>
-                  <td className="p-3 text-muted-foreground">
-                    {subject.allowed_days.length === 5
-                      ? "Alle"
-                      : subject.allowed_days
-                          .map((d) => WEEKDAYS.find((w) => w.value === d)?.short)
-                          .join(", ")}
-                  </td>
-                  <td className="p-3 text-muted-foreground">
-                    {subject.allowed_slots.length === 0
-                      ? "Alle"
-                      : subject.allowed_slots.map((s) => `${s}.`).join(", ")}
+                  <td className="p-3">
+                    <CategoryBadge category={subject.category} />
                   </td>
                   <td className="p-3">
                     <div className="flex gap-1 justify-end">

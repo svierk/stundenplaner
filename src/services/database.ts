@@ -12,6 +12,7 @@ import type {
   TimetableEntry,
   GradeLevel,
   AllowedSubjectEntry,
+  SubjectCategory,
 } from "@/types";
 
 let db: Database | null = null;
@@ -30,18 +31,25 @@ export async function getDb(): Promise<Database> {
     try {
       await db.execute("ALTER TABLE subjects ADD COLUMN no_double_staffing INTEGER NOT NULL DEFAULT 0");
     } catch { /* column already exists */ }
+    try {
+      await db.execute("ALTER TABLE subjects ADD COLUMN category TEXT NOT NULL DEFAULT 'minor'");
+    } catch { /* column already exists */ }
+    try {
+      await db.execute("ALTER TABLE subject_grade_configs ADD COLUMN category_override TEXT");
+    } catch { /* column already exists */ }
   }
   return db;
 }
 
 // ─── Subjects ────────────────────────────────────────────────────────────────
 
-type SubjectRow = { id: number; name: string; created_at: string; no_double_periods: number; no_double_staffing: number; no_parallel_classes: number };
+type SubjectRow = { id: number; name: string; created_at: string; category: string; no_double_periods: number; no_double_staffing: number; no_parallel_classes: number };
 type GradeConfigRow = {
   id: number;
   subject_id: number;
   grade_level: number;
   hours_per_week: number;
+  category_override: string | null;
 };
 type DayRow = { subject_id: number; day: number };
 type SlotRow = { subject_id: number; slot: number };
@@ -72,6 +80,7 @@ export async function getSubjects(): Promise<Subject[]> {
     id: r.id,
     name: r.name,
     created_at: r.created_at,
+    category: (r.category ?? "minor") as SubjectCategory,
     no_double_periods: r.no_double_periods === 1,
     no_double_staffing: r.no_double_staffing === 1,
     no_parallel_classes: r.no_parallel_classes === 1,
@@ -81,7 +90,12 @@ export async function getSubjects(): Promise<Subject[]> {
     ])),
     grade_configs: gradeConfigs
       .filter((g) => g.subject_id === r.id)
-      .map((g) => ({ ...g, grade_level: g.grade_level as GradeLevel, hours_per_week: g.hours_per_week })),
+      .map((g) => ({
+        ...g,
+        grade_level: g.grade_level as GradeLevel,
+        hours_per_week: g.hours_per_week,
+        category_override: g.category_override ? g.category_override as SubjectCategory : undefined,
+      })),
     allowed_days: allowedDays
       .filter((d) => d.subject_id === r.id)
       .map((d) => d.day as Weekday)
@@ -96,8 +110,8 @@ export async function getSubjects(): Promise<Subject[]> {
 export async function createSubject(data: SubjectFormData): Promise<number> {
   const db = await getDb();
   const result = await db.execute(
-    "INSERT INTO subjects (name, no_double_periods, no_double_staffing, no_parallel_classes) VALUES (?,?,?,?)",
-    [data.name, data.no_double_periods ? 1 : 0, data.no_double_staffing ? 1 : 0, data.no_parallel_classes ? 1 : 0],
+    "INSERT INTO subjects (name, category, no_double_periods, no_double_staffing, no_parallel_classes) VALUES (?,?,?,?,?)",
+    [data.name, data.category, data.no_double_periods ? 1 : 0, data.no_double_staffing ? 1 : 0, data.no_parallel_classes ? 1 : 0],
   );
   const id = result.lastInsertId as number;
   await _saveSubjectRelations(db, id, data);
@@ -107,8 +121,8 @@ export async function createSubject(data: SubjectFormData): Promise<number> {
 export async function updateSubject(id: number, data: SubjectFormData): Promise<void> {
   const db = await getDb();
   await db.execute(
-    "UPDATE subjects SET name = ?, no_double_periods = ?, no_double_staffing = ?, no_parallel_classes = ? WHERE id = ?",
-    [data.name, data.no_double_periods ? 1 : 0, data.no_double_staffing ? 1 : 0, data.no_parallel_classes ? 1 : 0, id],
+    "UPDATE subjects SET name = ?, category = ?, no_double_periods = ?, no_double_staffing = ?, no_parallel_classes = ? WHERE id = ?",
+    [data.name, data.category, data.no_double_periods ? 1 : 0, data.no_double_staffing ? 1 : 0, data.no_parallel_classes ? 1 : 0, id],
   );
   await db.execute("DELETE FROM subject_grade_configs WHERE subject_id = ?", [id]);
   await db.execute("DELETE FROM subject_allowed_days WHERE subject_id = ?", [id]);
@@ -129,8 +143,8 @@ export async function deleteSubject(id: number): Promise<void> {
 async function _saveSubjectRelations(db: Database, id: number, data: SubjectFormData) {
   for (const gc of data.grade_configs) {
     await db.execute(
-      "INSERT INTO subject_grade_configs (subject_id, grade_level, hours_per_week) VALUES (?,?,?)",
-      [id, gc.grade_level, gc.hours_per_week],
+      "INSERT INTO subject_grade_configs (subject_id, grade_level, hours_per_week, category_override) VALUES (?,?,?,?)",
+      [id, gc.grade_level, gc.hours_per_week, gc.category_override ?? null],
     );
   }
   for (const day of data.allowed_days) {
