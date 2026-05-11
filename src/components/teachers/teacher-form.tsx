@@ -252,120 +252,125 @@ export function TeacherForm({ open, onClose, onSubmit, initial, subjects, classe
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-6">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="classTeacher"
-                checked={isClassTeacher}
-                onCheckedChange={(v) => setIsClassTeacher(!!v)}
-              />
-              <Label htmlFor="classTeacher">Kann Klassenleitung sein</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="freeDay"
-                checked={hasFreeDay}
-                onCheckedChange={(v) => setHasFreeDay(!!v)}
-              />
-              <Label htmlFor="freeDay">Hat freien Tag</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="freeSlots"
-                checked={hasFreeSlots}
-                onCheckedChange={(v) => setHasFreeSlots(!!v)}
-              />
-              <Label htmlFor="freeSlots">Hat freie Stunden</Label>
-            </div>
-          </div>
+          <div className="rounded-md border border-gray-200 divide-y divide-gray-200">
 
-          {hasFreeDay && (
-            <div className="space-y-1.5">
-              <Label>Freier Tag (Auswahl)</Label>
-              <div className="flex gap-2 flex-wrap">
-                {WEEKDAYS.map((wd) => (
-                  <label key={wd.value} className="flex items-center gap-1.5 cursor-pointer">
-                    <Checkbox
-                      checked={freeDays.includes(wd.value)}
-                      onCheckedChange={() => toggleFreeDay(wd.value)}
-                    />
-                    <span className="text-sm">{wd.label}</span>
-                  </label>
-                ))}
+            {/* Kann Klassenleitung sein */}
+            <div className="space-y-2 p-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="classTeacher"
+                  checked={isClassTeacher}
+                  onCheckedChange={(v) => setIsClassTeacher(!!v)}
+                />
+                <Label htmlFor="classTeacher">Kann Klassenleitung sein</Label>
               </div>
+              {isClassTeacher && (
+                <div className="pl-6 space-y-1.5">
+                  <Label className="text-sm text-muted-foreground">Eigene Klasse (optional)</Label>
+                  <Select
+                    value={ownClassId?.toString() ?? "none"}
+                    onValueChange={(v) => setOwnClassId(v === "none" ? null : Number(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Keine Zuweisung" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Keine Zuweisung</SelectItem>
+                      {classes.map((c) => (
+                        <SelectItem key={c.id} value={c.id.toString()}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
-          )}
 
-          {hasFreeSlots && (
-            <div className="space-y-1.5">
-              <Label>Freie Stunden (an allen Wochentagen)</Label>
-              <div className="flex gap-2 flex-wrap">
-                {[1, 2, 3, 4, 5, 6].map((slot) => (
-                  <label key={slot} className="flex items-center gap-1.5 cursor-pointer">
-                    <Checkbox
-                      checked={freeSlots.includes(slot)}
-                      onCheckedChange={() => toggleFreeSlot(slot)}
-                    />
-                    <span className="text-sm">{slot}. Std</span>
-                  </label>
-                ))}
+            {/* Hat Zusatzaufgabe */}
+            <div className="space-y-2 p-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="additionalDuty"
+                  checked={hasAdditionalDuty}
+                  onCheckedChange={(v) => setHasAdditionalDuty(!!v)}
+                />
+                <Label htmlFor="additionalDuty">Hat Zusatzaufgabe</Label>
               </div>
+              {hasAdditionalDuty && (
+                <div className="pl-6 grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm text-muted-foreground">Bezeichnung</Label>
+                    <Input
+                      value={additionalDutyName}
+                      onChange={(e) => setAdditionalDutyName(e.target.value)}
+                      placeholder="z.B. Schulleitung, Beratung"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm text-muted-foreground">Stundenreduktion/Woche</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={hoursPerWeek}
+                      value={additionalDutyHours}
+                      onChange={(e) => setAdditionalDutyHours(Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
-          )}
 
-          {isClassTeacher && (
-            <div className="space-y-1.5">
-              <Label>Eigene Klasse (optional)</Label>
-              <Select
-                value={ownClassId?.toString() ?? "none"}
-                onValueChange={(v) => setOwnClassId(v === "none" ? null : Number(v))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Keine Zuweisung" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Keine Zuweisung</SelectItem>
-                  {classes.map((c) => (
-                    <SelectItem key={c.id} value={c.id.toString()}>
-                      {c.name}
-                    </SelectItem>
+            {/* Hat freien Tag */}
+            <div className="space-y-2 p-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="freeDay"
+                  checked={hasFreeDay}
+                  onCheckedChange={(v) => setHasFreeDay(!!v)}
+                />
+                <Label htmlFor="freeDay">Hat freien Tag</Label>
+              </div>
+              {hasFreeDay && (
+                <div className="pl-6 flex gap-3 flex-wrap">
+                  {WEEKDAYS.map((wd) => (
+                    <label key={wd.value} className="flex items-center gap-1.5 cursor-pointer">
+                      <Checkbox
+                        checked={freeDays.includes(wd.value)}
+                        onCheckedChange={() => toggleFreeDay(wd.value)}
+                      />
+                      <span className="text-sm">{wd.label}</span>
+                    </label>
                   ))}
-                </SelectContent>
-              </Select>
+                </div>
+              )}
             </div>
-          )}
 
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="additionalDuty"
-                checked={hasAdditionalDuty}
-                onCheckedChange={(v) => setHasAdditionalDuty(!!v)}
-              />
-              <Label htmlFor="additionalDuty">Hat Zusatzaufgabe</Label>
-            </div>
-            {hasAdditionalDuty && (
-              <div className="grid grid-cols-2 gap-3 pl-6">
-                <div className="space-y-1.5">
-                  <Label>Bezeichnung</Label>
-                  <Input
-                    value={additionalDutyName}
-                    onChange={(e) => setAdditionalDutyName(e.target.value)}
-                    placeholder="z.B. Schulleitung, Beratung"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Stundenreduktion/Woche</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={hoursPerWeek}
-                    value={additionalDutyHours}
-                    onChange={(e) => setAdditionalDutyHours(Number(e.target.value))}
-                  />
-                </div>
+            {/* Hat freie Stunden */}
+            <div className="space-y-2 p-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="freeSlots"
+                  checked={hasFreeSlots}
+                  onCheckedChange={(v) => setHasFreeSlots(!!v)}
+                />
+                <Label htmlFor="freeSlots">Hat freie Stunden</Label>
               </div>
-            )}
+              {hasFreeSlots && (
+                <div className="pl-6 flex gap-3 flex-wrap">
+                  {[1, 2, 3, 4, 5, 6].map((slot) => (
+                    <label key={slot} className="flex items-center gap-1.5 cursor-pointer">
+                      <Checkbox
+                        checked={freeSlots.includes(slot)}
+                        onCheckedChange={() => toggleFreeSlot(slot)}
+                      />
+                      <span className="text-sm">{slot}. Std</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
           </div>
 
           <AllowedSubjectSelect
