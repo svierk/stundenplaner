@@ -17,6 +17,10 @@ interface SlotKey {
 interface TeacherState {
   teacher: Teacher;
   assignedHours: number;
+  mainHours: number;    // primary Hauptfach teaching hours
+  minorHours: number;   // primary Nebenfach teaching hours
+  agHours: number;      // primary AG teaching hours
+  doubleHours: number;  // secondary double-staffing hours (counted toward capacity but no extra prep)
   busySlots: Set<string>;
 }
 
@@ -204,7 +208,7 @@ export function generateTimetable(
   const teacherStates = new Map<number, TeacherState>(
     teachers.map((t) => [
       t.id,
-      { teacher: t, assignedHours: 0, busySlots: new Set() },
+      { teacher: t, assignedHours: 0, mainHours: 0, minorHours: 0, agHours: 0, doubleHours: 0, busySlots: new Set() },
     ]),
   );
 
@@ -276,6 +280,8 @@ export function generateTimetable(
     const csKey = `${cls.id}-${subject.id}`;
 
     const isAg = isAgAssignment(subject, cls.grade_level);
+    const gradeConfig = subject.grade_configs.find((gc) => gc.grade_level === cls.grade_level);
+    const subjectCategory = gradeConfig?.category_override ?? subject.category;
 
     while (remaining > 0) {
       // Read the lock inside the loop so it takes effect from the 2nd hour onward
@@ -413,10 +419,12 @@ export function generateTimetable(
         }
       }
 
-      // If a teacher is locked for this class+subject, only consider them.
-      // Otherwise rank by: 1) subject priority (core > allowed > fallback)
-      //                     2) fewer teacher free-period gaps
-      //                     3) more remaining capacity
+      // Rank eligible teachers by:
+      //   1) subject priority (designated > allowed > fallback)
+      //   2) fewer intra-day free-period gaps
+      //   3) fairness: lower weighted primary workload (Hauptfach=3, Nebenfach/AG=1)
+      //      so that heavy and light subjects are spread evenly across the team
+      //   4) remaining capacity as final tiebreaker
       const eligibleTeachers = teachers
         .filter((t) => {
           if (lockedTeacherId !== undefined) {
@@ -438,6 +446,13 @@ export function generateTimetable(
           const freesA = countTeacherFreePeriods(stateA);
           const freesB = countTeacherFreePeriods(stateB);
           if (freesA !== freesB) return freesA - freesB;
+          // Weighted primary workload: Hauptfach counts 3×, everything else 1×.
+          // Normalised by capacity so teachers with different weekly hours are comparable.
+          const capA = effectiveHours(a) || 1;
+          const capB = effectiveHours(b) || 1;
+          const loadA = (stateA.mainHours * 3 + stateA.minorHours + stateA.agHours) / capA;
+          const loadB = (stateB.mainHours * 3 + stateB.minorHours + stateB.agHours) / capB;
+          if (Math.abs(loadA - loadB) > 0.05) return loadA - loadB;
           return (effectiveHours(b) - stateB.assignedHours) - (effectiveHours(a) - stateA.assignedHours);
         });
 
@@ -474,6 +489,9 @@ export function generateTimetable(
         });
 
         teacherState.assignedHours++;
+        if (subjectCategory === "main") teacherState.mainHours++;
+        else if (subjectCategory === "activity") teacherState.agHours++;
+        else teacherState.minorHours++;
         teacherState.busySlots.add(slotKey(day, slot));
         classState.slots.add(slotKey(day, slot));
         classState.slotsPerDay.set(day, (classState.slotsPerDay.get(day) ?? 0) + 1);
@@ -562,10 +580,16 @@ function _assignDoubleStaffing(
         const prioA = teacherSubjectPriority(a, entry.subject_id, entry.class_id);
         const prioB = teacherSubjectPriority(b, entry.subject_id, entry.class_id);
         if (prioA !== prioB) return prioA - prioB;
-        // Prefer teacher for whom this slot extends an existing block
         const gapA = teacherSlotGapScore(teacherStates.get(a.id)!, entry.day as Weekday, entry.slot);
         const gapB = teacherSlotGapScore(teacherStates.get(b.id)!, entry.day as Weekday, entry.slot);
-        return gapA - gapB;
+        if (gapA !== gapB) return gapA - gapB;
+        // Fairness: prefer teachers who have received fewer double-staffing hours so far,
+        // normalised by capacity so part-time teachers are treated proportionally.
+        const stateA = teacherStates.get(a.id)!;
+        const stateB = teacherStates.get(b.id)!;
+        const doubleRatioA = stateA.doubleHours / (effectiveHours(a) || 1);
+        const doubleRatioB = stateB.doubleHours / (effectiveHours(b) || 1);
+        return doubleRatioA - doubleRatioB;
       });
 
     if (availableTeachers.length > 0) {
@@ -576,6 +600,7 @@ function _assignDoubleStaffing(
       entry.second_teacher_abbreviation = secondTeacher.abbreviation;
       entry.second_teacher_name = `${secondTeacher.first_name} ${secondTeacher.last_name}`;
       ts.assignedHours++;
+      ts.doubleHours++;
       ts.busySlots.add(slotKey(entry.day, entry.slot));
     }
   }
