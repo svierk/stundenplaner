@@ -238,6 +238,12 @@ pub fn get_migrations() -> Vec<Migration> {
             sql: "ALTER TABLE subjects ADD COLUMN no_double_staffing INTEGER NOT NULL DEFAULT 0;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 15,
+            description: "add_no_repeat_per_day_to_subjects",
+            sql: "ALTER TABLE subjects ADD COLUMN no_repeat_per_day INTEGER NOT NULL DEFAULT 0;",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

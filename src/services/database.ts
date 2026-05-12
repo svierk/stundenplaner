@@ -44,6 +44,9 @@ export async function getDb(): Promise<Database> {
       await db.execute("ALTER TABLE subjects ADD COLUMN no_double_staffing INTEGER NOT NULL DEFAULT 0");
     } catch { /* column already exists */ }
     try {
+      await db.execute("ALTER TABLE subjects ADD COLUMN no_repeat_per_day INTEGER NOT NULL DEFAULT 0");
+    } catch { /* column already exists */ }
+    try {
       await db.execute("ALTER TABLE subjects ADD COLUMN category TEXT NOT NULL DEFAULT 'minor'");
     } catch { /* column already exists */ }
     try {
@@ -55,7 +58,7 @@ export async function getDb(): Promise<Database> {
 
 // ─── Subjects ────────────────────────────────────────────────────────────────
 
-type SubjectRow = { id: number; name: string; created_at: string; category: string; no_double_periods: number; no_double_staffing: number; no_parallel_classes: number };
+type SubjectRow = { id: number; name: string; created_at: string; category: string; no_double_periods: number; no_double_staffing: number; no_repeat_per_day: number; no_parallel_classes: number };
 type GradeConfigRow = {
   id: number;
   subject_id: number;
@@ -114,6 +117,7 @@ export async function getSubjects(): Promise<Subject[]> {
       category: (r.category ?? "minor") as SubjectCategory,
       no_double_periods: r.no_double_periods === 1,
       no_double_staffing: r.no_double_staffing === 1,
+      no_repeat_per_day: r.no_repeat_per_day === 1,
       no_parallel_classes: r.no_parallel_classes === 1,
       no_parallel_subject_ids: Array.from(new Set([
         ...noParallelWith.filter((n) => n.subject_id === r.id).map((n) => n.other_subject_id),
@@ -146,8 +150,8 @@ export async function getSubjects(): Promise<Subject[]> {
 export async function createSubject(data: SubjectFormData): Promise<number> {
   const db = await getDb();
   const result = await db.execute(
-    "INSERT INTO subjects (name, category, no_double_periods, no_double_staffing, no_parallel_classes) VALUES (?,?,?,?,?)",
-    [data.name, data.category, data.no_double_periods ? 1 : 0, data.no_double_staffing ? 1 : 0, data.no_parallel_classes ? 1 : 0],
+    "INSERT INTO subjects (name, category, no_double_periods, no_double_staffing, no_repeat_per_day, no_parallel_classes) VALUES (?,?,?,?,?,?)",
+    [data.name, data.category, data.no_double_periods ? 1 : 0, data.no_double_staffing ? 1 : 0, data.no_repeat_per_day ? 1 : 0, data.no_parallel_classes ? 1 : 0],
   );
   const id = result.lastInsertId as number;
   await _saveSubjectRelations(db, id, data);
@@ -157,8 +161,8 @@ export async function createSubject(data: SubjectFormData): Promise<number> {
 export async function updateSubject(id: number, data: SubjectFormData): Promise<void> {
   const db = await getDb();
   await db.execute(
-    "UPDATE subjects SET name = ?, category = ?, no_double_periods = ?, no_double_staffing = ?, no_parallel_classes = ? WHERE id = ?",
-    [data.name, data.category, data.no_double_periods ? 1 : 0, data.no_double_staffing ? 1 : 0, data.no_parallel_classes ? 1 : 0, id],
+    "UPDATE subjects SET name = ?, category = ?, no_double_periods = ?, no_double_staffing = ?, no_repeat_per_day = ?, no_parallel_classes = ? WHERE id = ?",
+    [data.name, data.category, data.no_double_periods ? 1 : 0, data.no_double_staffing ? 1 : 0, data.no_repeat_per_day ? 1 : 0, data.no_parallel_classes ? 1 : 0, id],
   );
   await db.execute("DELETE FROM subject_grade_configs WHERE subject_id = ?", [id]);
   await db.execute("DELETE FROM subject_allowed_days WHERE subject_id = ?", [id]);

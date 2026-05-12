@@ -72,6 +72,11 @@ function isValidSwap(
     if (othersOnDay.some((e) => Math.abs(e.slot - slT) === 1)) return false;
   }
 
+  if (sS.no_repeat_per_day) {
+    if (allEntries.some((e) => e.class_id === src.class_id && e.subject_id === sS.id && e.day === dT && e.id !== src.id))
+      return false;
+  }
+
   // ── Target subject moving to source slot ─────────────────────────────────
 
   if (sT.allowed_days.length > 0 && !sT.allowed_days.includes(dS)) return false;
@@ -97,6 +102,11 @@ function isValidSwap(
       (e) => e.class_id === tgt.class_id && e.subject_id === sT.id && e.day === dS && e.id !== tgt.id,
     );
     if (othersOnDay.some((e) => Math.abs(e.slot - slS) === 1)) return false;
+  }
+
+  if (sT.no_repeat_per_day) {
+    if (allEntries.some((e) => e.class_id === tgt.class_id && e.subject_id === sT.id && e.day === dS && e.id !== tgt.id))
+      return false;
   }
 
   return true;

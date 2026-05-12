@@ -53,6 +53,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
   const [allowedSlots, setAllowedSlots] = useState<number[]>(initial?.allowed_slots ?? []);
   const [noDoublePeriods, setNoDoublePeriods] = useState(initial?.no_double_periods ?? false);
   const [noDoubleStaffing, setNoDoubleStaffing] = useState(initial?.no_double_staffing ?? false);
+  const [noRepeatPerDay, setNoRepeatPerDay] = useState(initial?.no_repeat_per_day ?? false);
   const [noParallelClasses, setNoParallelClasses] = useState(initial?.no_parallel_classes ?? false);
   const [noParallelSubjectIds, setNoParallelSubjectIds] = useState<number[]>(
     initial?.no_parallel_subject_ids ?? [],
@@ -121,6 +122,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
         allowed_slots: allowedSlots,
         no_double_periods: noDoublePeriods,
         no_double_staffing: noDoubleStaffing,
+        no_repeat_per_day: noRepeatPerDay,
         no_parallel_classes: noParallelClasses,
         no_parallel_subject_ids: noParallelClasses ? noParallelSubjectIds : [],
         coupled_class_ids: coupledClassIds,
@@ -273,22 +275,31 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="noDoublePeriods"
-              checked={noDoublePeriods}
-              onCheckedChange={(v) => setNoDoublePeriods(!!v)}
-            />
-            <Label htmlFor="noDoublePeriods">Keine Doppelstunden</Label>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="noDoubleStaffing"
-              checked={noDoubleStaffing}
-              onCheckedChange={(v) => setNoDoubleStaffing(!!v)}
-            />
-            <Label htmlFor="noDoubleStaffing">Keine Doppelbesetzung</Label>
+          <div className="space-y-2">
+            <Label>Einschränkungen</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <Checkbox
+                  checked={noDoublePeriods}
+                  onCheckedChange={(v) => setNoDoublePeriods(!!v)}
+                />
+                <span className="text-sm">Keine Doppelstunden</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <Checkbox
+                  checked={noDoubleStaffing}
+                  onCheckedChange={(v) => setNoDoubleStaffing(!!v)}
+                />
+                <span className="text-sm">Keine Doppelbesetzung</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <Checkbox
+                  checked={noRepeatPerDay}
+                  onCheckedChange={(v) => setNoRepeatPerDay(!!v)}
+                />
+                <span className="text-sm">Nicht mehrfach am gleichen Tag</span>
+              </label>
+            </div>
           </div>
 
           <div className="space-y-2">

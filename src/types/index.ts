@@ -41,6 +41,7 @@ export interface Subject {
   allowed_slots: number[];
   no_double_periods: boolean;
   no_double_staffing: boolean;
+  no_repeat_per_day: boolean;
   no_parallel_classes: boolean;
   no_parallel_subject_ids: number[];
   // Parallel scheduling (Cases 1–3):
@@ -58,6 +59,7 @@ export interface SubjectFormData {
   allowed_slots: number[];
   no_double_periods: boolean;
   no_double_staffing: boolean;
+  no_repeat_per_day: boolean;
   no_parallel_classes: boolean;
   no_parallel_subject_ids: number[];
   coupled_class_ids: number[];

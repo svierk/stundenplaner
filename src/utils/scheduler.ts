@@ -443,6 +443,7 @@ export function generateTimetable(
 
           const sdKey = `${subject.id}-${day}`;
           const subjectSlotsOnDay = classState.subjectDaySlots.get(sdKey) ?? new Set<number>();
+          if (subject.no_repeat_per_day && subjectSlotsOnDay.size > 0) continue;
           const globalSlots = subjectGlobalSlots.get(subject.id);
           const excluded = mutualExclusions.get(subject.id);
 
