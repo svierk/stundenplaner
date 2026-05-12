@@ -578,3 +578,39 @@ export async function deleteTimetable(id: number): Promise<void> {
   const db = await getDb();
   await db.execute("DELETE FROM timetables WHERE id = ?", [id]);
 }
+
+export async function swapTimetableEntries(idA: number, idB: number): Promise<void> {
+  const db = await getDb();
+  const rows = await db.select<{ id: number; day: number; slot: number }[]>(
+    "SELECT id, day, slot FROM timetable_entries WHERE id IN (?, ?)",
+    [idA, idB],
+  );
+  if (rows.length !== 2) throw new Error(`Einträge ${idA} und ${idB} nicht gefunden`);
+  const a = rows.find((r) => r.id === idA)!;
+  const b = rows.find((r) => r.id === idB)!;
+
+  // Read double-staffing for both entries before swapping
+  const dsRows = await db.select<{ entry_id: number; teacher_id: number }[]>(
+    "SELECT entry_id, teacher_id FROM timetable_double_staff WHERE entry_id IN (?, ?)",
+    [idA, idB],
+  );
+  const dsA = dsRows.filter((r) => r.entry_id === idA).map((r) => r.teacher_id);
+  const dsB = dsRows.filter((r) => r.entry_id === idB).map((r) => r.teacher_id);
+
+  // Swap day/slot
+  await db.execute("UPDATE timetable_entries SET day=?, slot=? WHERE id=?", [b.day, b.slot, idA]);
+  await db.execute("UPDATE timetable_entries SET day=?, slot=? WHERE id=?", [a.day, a.slot, idB]);
+
+  // Swap double-staffing so it stays at its original slot position:
+  // Entry A moves to B's old slot → A gets B's double-staffing teachers
+  // Entry B moves to A's old slot → B gets A's double-staffing teachers
+  await db.execute("DELETE FROM timetable_double_staff WHERE entry_id IN (?, ?)", [idA, idB]);
+  for (const tid of dsB) {
+    await db.execute("INSERT INTO timetable_double_staff (entry_id, teacher_id) VALUES (?, ?)", [idA, tid]);
+  }
+  for (const tid of dsA) {
+    await db.execute("INSERT INTO timetable_double_staff (entry_id, teacher_id) VALUES (?, ?)", [idB, tid]);
+  }
+  await db.execute("UPDATE timetable_entries SET is_double_staffed=? WHERE id=?", [dsB.length > 0 ? 1 : 0, idA]);
+  await db.execute("UPDATE timetable_entries SET is_double_staffed=? WHERE id=?", [dsA.length > 0 ? 1 : 0, idB]);
+}

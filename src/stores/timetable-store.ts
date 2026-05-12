@@ -10,6 +10,7 @@ interface TimetableStore {
   save: (name: string, schoolYear: string, entries: Omit<TimetableEntry, "id" | "timetable_id">[]) => Promise<number>;
   remove: (id: number) => Promise<void>;
   setActive: (timetable: Timetable | null) => void;
+  swapEntries: (idA: number, idB: number) => Promise<void>;
 }
 
 export const useTimetableStore = create<TimetableStore>((set, get) => ({
@@ -41,4 +42,12 @@ export const useTimetableStore = create<TimetableStore>((set, get) => ({
   },
 
   setActive: (timetable) => set({ activeTimetable: timetable }),
+
+  swapEntries: async (idA, idB) => {
+    await db.swapTimetableEntries(idA, idB);
+    const { activeTimetable } = get();
+    if (!activeTimetable) return;
+    const fresh = await db.getTimetableEntries(activeTimetable.id);
+    set({ activeTimetable: { ...activeTimetable, entries: fresh } });
+  },
 }));

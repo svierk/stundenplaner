@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CalendarDays, Play, Download, Trash2, AlertTriangle } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -22,13 +22,13 @@ import { useToast } from "@/hooks/use-toast";
 import { generateTimetable } from "@/utils/scheduler";
 import { exportTimetableToExcel } from "@/utils/excel-export";
 import { WEEKDAYS } from "@/types";
-import type { Timetable, Weekday } from "@/types";
+import type { Timetable, TimetableEntry, Weekday } from "@/types";
 
 export function TimetablePage() {
   const { subjects, fetch: fetchSubjects } = useSubjectStore();
   const { teachers, fetch: fetchTeachers } = useTeacherStore();
   const { classes, fetch: fetchClasses } = useClassStore();
-  const { timetables, activeTimetable, loading, fetch: fetchTimetables, save: saveTimetable, remove, setActive } = useTimetableStore();
+  const { timetables, activeTimetable, loading, fetch: fetchTimetables, save: saveTimetable, remove, setActive, swapEntries } = useTimetableStore();
   const { configs: gradeLevelConfigs, fetch: fetchGradeLevelConfigs } = useGradeLevelStore();
   const { toast } = useToast();
 
@@ -38,6 +38,9 @@ export function TimetablePage() {
   const [viewMode, setViewMode] = useState<"classes" | "teachers">("classes");
   const [selectedClassName, setSelectedClassName] = useState<string>("all");
   const [selectedTeacherAbbr, setSelectedTeacherAbbr] = useState<string>("all");
+  const [dragEntry, setDragEntry] = useState<TimetableEntry | null>(null);
+  // Ref so onCellDrop always reads the current entry regardless of closure age
+  const dragEntryRef = useRef<TimetableEntry | null>(null);
 
   useEffect(() => {
     fetchSubjects();
@@ -270,6 +273,7 @@ export function TimetablePage() {
                   const entries = allEntries.filter((e) => e.class_name === cls.name);
                   if (entries.length === 0 && selectedClassName !== "all") return null;
                   const maxSlot = entries.reduce((m, e) => Math.max(m, e.slot), 6);
+                  const isThisClassDragging = dragEntry?.class_name === cls.name;
                   return (
                     <TimetableGrid
                       key={cls.id}
@@ -319,6 +323,38 @@ export function TimetablePage() {
                             ))}
                           </div>
                         );
+                      }}
+                      onCellDragStart={(day, slot) => {
+                        const matching = entries.filter((e) => e.day === day && e.slot === slot);
+                        if (matching.length === 1) {
+                          dragEntryRef.current = matching[0];
+                          setDragEntry(matching[0]);
+                        }
+                      }}
+                      onCellDrop={(day, slot) => {
+                        const de = dragEntryRef.current;
+                        dragEntryRef.current = null;
+                        setDragEntry(null);
+                        if (!de) return;
+                        const matching = entries.filter((e) => e.day === day && e.slot === slot);
+                        if (matching.length !== 1) return;
+                        if (matching[0].teacher_id !== de.teacher_id) return;
+                        if (matching[0].id === de.id) return;
+                        swapEntries(de.id, matching[0].id).catch((err) => {
+                          toast({ variant: "destructive", title: "Fehler beim Tauschen", description: String(err) });
+                        });
+                      }}
+                      onDragEnd={() => {
+                        dragEntryRef.current = null;
+                        setDragEntry(null);
+                      }}
+                      cellDragState={(day, slot) => {
+                        if (!isThisClassDragging || !dragEntry) return null;
+                        if (dragEntry.day === day && dragEntry.slot === slot) return "source";
+                        const matching = entries.filter((e) => e.day === day && e.slot === slot);
+                        if (matching.length !== 1) return null;
+                        if (matching[0].teacher_id !== dragEntry.teacher_id) return null;
+                        return "valid-target";
                       }}
                     />
                   );
@@ -409,13 +445,61 @@ function TimetableGrid({
   maxSlot,
   renderCell,
   getCellClass,
+  onCellDragStart,
+  onCellDrop,
+  onDragEnd,
+  cellDragState,
 }: {
   title: string;
   entries: { day: Weekday; slot: number }[];
   maxSlot: number;
   renderCell: (day: Weekday, slot: number) => ReactNode;
   getCellClass?: (day: Weekday, slot: number) => string;
+  onCellDragStart?: (day: Weekday, slot: number) => void;
+  onCellDrop?: (day: Weekday, slot: number) => void;
+  onDragEnd?: () => void;
+  cellDragState?: (day: Weekday, slot: number) => "source" | "valid-target" | null;
 }) {
+  // Pointer-based drag: bypasses WKWebView's HTML5 D&D interception
+  const draggingRef = useRef(false);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>, day: Weekday, slot: number) => {
+    if (!onCellDragStart) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    (e.currentTarget as HTMLDivElement).style.cursor = "grabbing";
+    draggingRef.current = true;
+    onCellDragStart(day, slot);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    (e.currentTarget as HTMLDivElement).style.cursor = "grab";
+    (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+
+    // Find which table cell is under the cursor at release
+    const els = document.elementsFromPoint(e.clientX, e.clientY);
+    const targetTd = els.find(
+      (el) => el instanceof HTMLTableCellElement && el.hasAttribute("data-day"),
+    ) as HTMLTableCellElement | undefined;
+
+    if (targetTd && onCellDrop) {
+      const targetDay = Number(targetTd.dataset.day) as Weekday;
+      const targetSlot = Number(targetTd.dataset.slot);
+      onCellDrop(targetDay, targetSlot);
+    } else {
+      onDragEnd?.();
+    }
+  };
+
+  const handlePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    (e.currentTarget as HTMLDivElement).style.cursor = "grab";
+    onDragEnd?.();
+  };
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -442,10 +526,23 @@ function TimetableGrid({
                   </td>
                   {([1, 2, 3, 4, 5] as Weekday[]).map((day) => {
                     const hasEntry = entries.some((e) => e.day === day && e.slot === slot);
+                    const ds = cellDragState ? cellDragState(day, slot) : null;
+                    const isValidTarget = ds === "valid-target";
                     return (
-                      <td key={day} className="p-1 border-r align-top">
+                      <td
+                        key={day}
+                        data-day={day}
+                        data-slot={slot}
+                        className={`p-1 border-r align-top transition-colors${isValidTarget ? " bg-blue-50" : ""}`}
+                      >
                         {hasEntry ? (
-                          <div className={getCellClass ? getCellClass(day, slot) : "rounded px-1.5 py-1 text-xs bg-primary/10 border border-primary/20"}>
+                          <div
+                            className={`${getCellClass ? getCellClass(day, slot) : "rounded px-1.5 py-1 text-xs bg-primary/10 border border-primary/20"}${ds === "source" ? " opacity-50" : ds === "valid-target" ? " ring-2 ring-blue-400" : ""}`}
+                            onPointerDown={onCellDragStart ? (e) => handlePointerDown(e, day, slot) : undefined}
+                            onPointerUp={onCellDragStart ? handlePointerUp : undefined}
+                            onPointerCancel={onCellDragStart ? handlePointerCancel : undefined}
+                            style={onCellDragStart ? { cursor: "grab", userSelect: "none" } : undefined}
+                          >
                             {renderCell(day, slot)}
                           </div>
                         ) : (
