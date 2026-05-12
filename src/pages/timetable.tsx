@@ -552,19 +552,55 @@ function TimetableGrid({
 }) {
   // Pointer-based drag: bypasses WKWebView's HTML5 D&D interception
   const draggingRef = useRef(false);
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+  const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const removeGhost = () => {
+    ghostRef.current?.remove();
+    ghostRef.current = null;
+  };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>, day: Weekday, slot: number) => {
     if (!onCellDragStart) return;
     e.preventDefault();
-    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-    (e.currentTarget as HTMLDivElement).style.cursor = "grabbing";
+    const el = e.currentTarget as HTMLDivElement;
+    el.setPointerCapture(e.pointerId);
+    el.style.cursor = "grabbing";
     draggingRef.current = true;
     onCellDragStart(day, slot);
+
+    // Build floating ghost that follows the cursor
+    const rect = el.getBoundingClientRect();
+    dragOffsetRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const ghost = el.cloneNode(true) as HTMLDivElement;
+    ghost.style.cssText = `
+      position: fixed;
+      left: ${rect.left}px;
+      top: ${rect.top}px;
+      width: ${rect.width}px;
+      pointer-events: none;
+      opacity: 0.9;
+      z-index: 9999;
+      transform: rotate(2deg) scale(1.05);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      border-radius: 6px;
+      transition: none;
+    `;
+    document.body.appendChild(ghost);
+    ghostRef.current = ghost;
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current || !ghostRef.current) return;
+    const { x, y } = dragOffsetRef.current;
+    ghostRef.current.style.left = `${e.clientX - x}px`;
+    ghostRef.current.style.top = `${e.clientY - y}px`;
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!draggingRef.current) return;
     draggingRef.current = false;
+    removeGhost();
     (e.currentTarget as HTMLDivElement).style.cursor = "grab";
     (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
 
@@ -586,6 +622,7 @@ function TimetableGrid({
   const handlePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!draggingRef.current) return;
     draggingRef.current = false;
+    removeGhost();
     (e.currentTarget as HTMLDivElement).style.cursor = "grab";
     onDragEnd?.();
   };
@@ -629,6 +666,7 @@ function TimetableGrid({
                           <div
                             className={`${getCellClass ? getCellClass(day, slot) : "rounded px-1.5 py-1 text-xs bg-primary/10 border border-primary/20"}${ds === "source" ? " opacity-50" : ds === "valid-target" ? " ring-2 ring-blue-400" : ""}`}
                             onPointerDown={onCellDragStart ? (e) => handlePointerDown(e, day, slot) : undefined}
+                            onPointerMove={onCellDragStart ? handlePointerMove : undefined}
                             onPointerUp={onCellDragStart ? handlePointerUp : undefined}
                             onPointerCancel={onCellDragStart ? handlePointerCancel : undefined}
                             style={onCellDragStart ? { cursor: "grab", userSelect: "none" } : undefined}
