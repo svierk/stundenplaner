@@ -27,6 +27,18 @@ export async function getDb(): Promise<Database> {
       other_subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
       PRIMARY KEY (subject_id, other_subject_id)
     )`);
+    // Classes that share a subject simultaneously with the same teacher (Cases 2 & 3)
+    await db.execute(`CREATE TABLE IF NOT EXISTS subject_coupled_classes (
+      subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+      class_id   INTEGER NOT NULL REFERENCES classes(id)   ON DELETE CASCADE,
+      PRIMARY KEY (subject_id, class_id)
+    )`);
+    // Bidirectional partner-subject link: both (A,B) and (B,A) are stored (Cases 1 & 3)
+    await db.execute(`CREATE TABLE IF NOT EXISTS subject_parallel_partner (
+      subject_id         INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+      partner_subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+      PRIMARY KEY (subject_id, partner_subject_id)
+    )`);
     // ALTER TABLE doesn't support IF NOT EXISTS in SQLite; catch the benign "duplicate column" error.
     try {
       await db.execute("ALTER TABLE subjects ADD COLUMN no_double_staffing INTEGER NOT NULL DEFAULT 0");
@@ -54,6 +66,8 @@ type GradeConfigRow = {
 type DayRow = { subject_id: number; day: number };
 type SlotRow = { subject_id: number; slot: number };
 type NoParallelRow = { subject_id: number; other_subject_id: number };
+type CoupledClassRow = { subject_id: number; class_id: number };
+type ParallelPartnerRow = { subject_id: number; partner_subject_id: number };
 
 export async function getSubjects(): Promise<Subject[]> {
   const db = await getDb();
@@ -75,36 +89,58 @@ export async function getSubjects(): Promise<Subject[]> {
     `SELECT * FROM subject_no_parallel_with
      WHERE subject_id IN (${ids.join(",")}) OR other_subject_id IN (${ids.join(",")})`,
   );
+  const coupledClasses = await db.select<CoupledClassRow[]>(
+    `SELECT * FROM subject_coupled_classes WHERE subject_id IN (${ids.join(",")})`,
+  );
+  // Fetch both directions so both subjects in a partnership show the link
+  const parallelPartners = await db.select<ParallelPartnerRow[]>(
+    `SELECT * FROM subject_parallel_partner
+     WHERE subject_id IN (${ids.join(",")}) OR partner_subject_id IN (${ids.join(",")})`,
+  );
 
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    created_at: r.created_at,
-    category: (r.category ?? "minor") as SubjectCategory,
-    no_double_periods: r.no_double_periods === 1,
-    no_double_staffing: r.no_double_staffing === 1,
-    no_parallel_classes: r.no_parallel_classes === 1,
-    no_parallel_subject_ids: Array.from(new Set([
-      ...noParallelWith.filter((n) => n.subject_id === r.id).map((n) => n.other_subject_id),
-      ...noParallelWith.filter((n) => n.other_subject_id === r.id).map((n) => n.subject_id),
-    ])),
-    grade_configs: gradeConfigs
-      .filter((g) => g.subject_id === r.id)
-      .map((g) => ({
-        ...g,
-        grade_level: g.grade_level as GradeLevel,
-        hours_per_week: g.hours_per_week,
-        category_override: g.category_override ? g.category_override as SubjectCategory : undefined,
-      })),
-    allowed_days: allowedDays
-      .filter((d) => d.subject_id === r.id)
-      .map((d) => d.day as Weekday)
-      .sort(),
-    allowed_slots: allowedSlots
-      .filter((s) => s.subject_id === r.id)
-      .map((s) => s.slot)
-      .sort((a, b) => a - b),
-  }));
+  return rows.map((r) => {
+    // Resolve partner: look up either direction, take the ID that is NOT r.id
+    const partnerEntry = parallelPartners.find(
+      (p) => p.subject_id === r.id || p.partner_subject_id === r.id,
+    );
+    const partnerSubjectId = partnerEntry
+      ? (partnerEntry.subject_id === r.id ? partnerEntry.partner_subject_id : partnerEntry.subject_id)
+      : null;
+
+    return {
+      id: r.id,
+      name: r.name,
+      created_at: r.created_at,
+      category: (r.category ?? "minor") as SubjectCategory,
+      no_double_periods: r.no_double_periods === 1,
+      no_double_staffing: r.no_double_staffing === 1,
+      no_parallel_classes: r.no_parallel_classes === 1,
+      no_parallel_subject_ids: Array.from(new Set([
+        ...noParallelWith.filter((n) => n.subject_id === r.id).map((n) => n.other_subject_id),
+        ...noParallelWith.filter((n) => n.other_subject_id === r.id).map((n) => n.subject_id),
+      ])),
+      coupled_class_ids: coupledClasses
+        .filter((c) => c.subject_id === r.id)
+        .map((c) => c.class_id),
+      parallel_partner_subject_id: partnerSubjectId,
+      grade_configs: gradeConfigs
+        .filter((g) => g.subject_id === r.id)
+        .map((g) => ({
+          ...g,
+          grade_level: g.grade_level as GradeLevel,
+          hours_per_week: g.hours_per_week,
+          category_override: g.category_override ? g.category_override as SubjectCategory : undefined,
+        })),
+      allowed_days: allowedDays
+        .filter((d) => d.subject_id === r.id)
+        .map((d) => d.day as Weekday)
+        .sort(),
+      allowed_slots: allowedSlots
+        .filter((s) => s.subject_id === r.id)
+        .map((s) => s.slot)
+        .sort((a, b) => a - b),
+    };
+  });
 }
 
 export async function createSubject(data: SubjectFormData): Promise<number> {
@@ -127,9 +163,13 @@ export async function updateSubject(id: number, data: SubjectFormData): Promise<
   await db.execute("DELETE FROM subject_grade_configs WHERE subject_id = ?", [id]);
   await db.execute("DELETE FROM subject_allowed_days WHERE subject_id = ?", [id]);
   await db.execute("DELETE FROM subject_allowed_slots WHERE subject_id = ?", [id]);
-  // Delete both directions so re-inserting is always clean
   await db.execute(
     "DELETE FROM subject_no_parallel_with WHERE subject_id = ? OR other_subject_id = ?",
+    [id, id],
+  );
+  await db.execute("DELETE FROM subject_coupled_classes WHERE subject_id = ?", [id]);
+  await db.execute(
+    "DELETE FROM subject_parallel_partner WHERE subject_id = ? OR partner_subject_id = ?",
     [id, id],
   );
   await _saveSubjectRelations(db, id, data);
@@ -165,6 +205,24 @@ async function _saveSubjectRelations(db: Database, id: number, data: SubjectForm
     await db.execute(
       "INSERT OR IGNORE INTO subject_no_parallel_with (subject_id, other_subject_id) VALUES (?,?)",
       [otherId, id],
+    );
+  }
+  for (const classId of data.coupled_class_ids) {
+    await db.execute(
+      "INSERT OR IGNORE INTO subject_coupled_classes (subject_id, class_id) VALUES (?,?)",
+      [id, classId],
+    );
+  }
+  if (data.parallel_partner_subject_id !== null) {
+    const partnerId = data.parallel_partner_subject_id;
+    // Store both directions so both subjects' forms show the link
+    await db.execute(
+      "INSERT OR IGNORE INTO subject_parallel_partner (subject_id, partner_subject_id) VALUES (?,?)",
+      [id, partnerId],
+    );
+    await db.execute(
+      "INSERT OR IGNORE INTO subject_parallel_partner (subject_id, partner_subject_id) VALUES (?,?)",
+      [partnerId, id],
     );
   }
 }

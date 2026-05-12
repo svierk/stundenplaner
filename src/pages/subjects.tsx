@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SubjectForm } from "@/components/subjects/subject-form";
 import { useSubjectStore } from "@/stores/subject-store";
+import { useClassStore } from "@/stores/class-store";
 import { useToast } from "@/hooks/use-toast";
 import { SortHeader } from "@/components/ui/sort-header";
 import { SUBJECT_CATEGORIES } from "@/types";
@@ -25,6 +26,7 @@ function CategoryBadge({ category }: { category: import("@/types").SubjectCatego
 
 export function SubjectsPage() {
   const { subjects, loading, fetch, create, update, remove } = useSubjectStore();
+  const { classes, fetch: fetchClasses } = useClassStore();
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Subject | undefined>();
@@ -48,7 +50,8 @@ export function SubjectsPage() {
 
   useEffect(() => {
     fetch();
-  }, [fetch]);
+    fetchClasses();
+  }, [fetch, fetchClasses]);
 
   const handleCreate = async (data: Parameters<typeof create>[0]) => {
     try {
@@ -184,6 +187,7 @@ export function SubjectsPage() {
         onSubmit={editing ? handleUpdate : handleCreate}
         initial={editing}
         allSubjects={subjects}
+        allClasses={classes}
       />
     </div>
   );

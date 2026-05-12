@@ -43,6 +43,11 @@ export interface Subject {
   no_double_staffing: boolean;
   no_parallel_classes: boolean;
   no_parallel_subject_ids: number[];
+  // Parallel scheduling (Cases 1–3):
+  // coupled_class_ids: these classes share this subject simultaneously with the same teacher (Cases 2 & 3)
+  // parallel_partner_subject_id: a subject that must be co-scheduled at the same slot per class (Cases 1 & 3)
+  coupled_class_ids: number[];
+  parallel_partner_subject_id: number | null;
 }
 
 export interface SubjectFormData {
@@ -55,6 +60,8 @@ export interface SubjectFormData {
   no_double_staffing: boolean;
   no_parallel_classes: boolean;
   no_parallel_subject_ids: number[];
+  coupled_class_ids: number[];
+  parallel_partner_subject_id: number | null;
 }
 
 // ─── Teachers ─────────────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { Subject, SubjectFormData, Weekday, GradeLevel, SubjectCategory } from "@/types";
+import type { Subject, SubjectFormData, Weekday, GradeLevel, SubjectCategory, SchoolClass } from "@/types";
 import { WEEKDAYS, GRADE_LEVELS, MAX_SLOTS_PER_DAY, SUBJECT_CATEGORIES } from "@/types";
 
 interface SubjectFormProps {
@@ -26,6 +26,7 @@ interface SubjectFormProps {
   onSubmit: (data: SubjectFormData) => Promise<void>;
   initial?: Subject;
   allSubjects: Subject[];
+  allClasses: SchoolClass[];
 }
 
 const defaultGradeConfig = (grade: GradeLevel) => ({
@@ -34,7 +35,7 @@ const defaultGradeConfig = (grade: GradeLevel) => ({
   category_override: undefined as SubjectCategory | undefined,
 });
 
-export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: SubjectFormProps) {
+export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, allClasses }: SubjectFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [category, setCategory] = useState<SubjectCategory>(initial?.category ?? "minor");
   const [gradeConfigs, setGradeConfigs] = useState(
@@ -56,6 +57,12 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
   const [noParallelSubjectIds, setNoParallelSubjectIds] = useState<number[]>(
     initial?.no_parallel_subject_ids ?? [],
   );
+  const [coupledClassIds, setCoupledClassIds] = useState<number[]>(
+    initial?.coupled_class_ids ?? [],
+  );
+  const [parallelPartnerId, setParallelPartnerId] = useState<number | null>(
+    initial?.parallel_partner_subject_id ?? null,
+  );
   const [saving, setSaving] = useState(false);
 
   const otherSubjects = allSubjects.filter((s) => s.id !== initial?.id);
@@ -63,6 +70,11 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
   const toggleNoParallelSubject = (id: number) =>
     setNoParallelSubjectIds((prev) =>
       prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
+    );
+
+  const toggleCoupledClass = (id: number) =>
+    setCoupledClassIds((prev) =>
+      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id],
     );
 
   const toggleDay = (day: Weekday) => {
@@ -111,6 +123,8 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
         no_double_staffing: noDoubleStaffing,
         no_parallel_classes: noParallelClasses,
         no_parallel_subject_ids: noParallelClasses ? noParallelSubjectIds : [],
+        coupled_class_ids: coupledClassIds,
+        parallel_partner_subject_id: parallelPartnerId,
       });
       onClose();
     } catch {
@@ -240,8 +254,8 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
 
           <div className="space-y-2">
             <Label>
-              Eingeschränkte Unterrichtsstunden{" "}
-              <span className="text-muted-foreground font-normal">(leer = alle Stunden)</span>
+              Erlaubte Unterrichtsstunden{" "}
+              <span className="text-muted-foreground font-normal">(leer = alle Stunden erlaubt)</span>
             </Label>
             <div className="flex gap-2 flex-wrap">
               {Array.from({ length: MAX_SLOTS_PER_DAY }, (_, i) => i + 1).map((slot) => (
@@ -311,6 +325,59 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects }: S
                 </div>
               </div>
             )}
+          </div>
+
+          {/* ── Parallelunterricht ─────────────────────────────────────────── */}
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-3 space-y-3">
+            <p className="text-sm font-medium">Parallelunterricht</p>
+
+            {/* Option A – klassenübergreifend, selbe Lehrkraft (Fall 2 & 3) */}
+            <div className="space-y-1.5">
+              <Label className="text-sm">
+                Wird für folgende Klassen gleichzeitig von derselben Lehrkraft unterrichtet
+                <span className="text-muted-foreground font-normal"> (leer = kein gemeinsamer Unterricht)</span>
+              </Label>
+              {allClasses.length === 0 ? (
+                <p className="text-xs text-muted-foreground pl-1">Noch keine Klassen angelegt.</p>
+              ) : (
+                <div className="rounded-md border border-gray-200 p-2 max-h-32 overflow-y-auto space-y-1 bg-white">
+                  {allClasses.map((c) => (
+                    <label
+                      key={c.id}
+                      className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-blue-50 transition-colors"
+                    >
+                      <Checkbox
+                        checked={coupledClassIds.includes(c.id)}
+                        onCheckedChange={() => toggleCoupledClass(c.id)}
+                      />
+                      <span className="text-sm">{c.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Option B – paralleles Partnerfach pro Klasse (Fall 1 & 3) */}
+            <div className="space-y-1.5">
+              <Label className="text-sm">
+                Findet parallel zu folgendem Fach statt (pro Klasse, eigene Lehrkraft)
+                <span className="text-muted-foreground font-normal"> (Pflichtbedingung)</span>
+              </Label>
+              <Select
+                value={parallelPartnerId !== null ? String(parallelPartnerId) : "none"}
+                onValueChange={(v) => setParallelPartnerId(v === "none" ? null : Number(v))}
+              >
+                <SelectTrigger className="bg-white">
+                  <SelectValue placeholder="Kein Partnerfach" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">– Kein Partnerfach –</SelectItem>
+                  {otherSubjects.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
 

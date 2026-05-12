@@ -277,24 +277,47 @@ export function TimetablePage() {
                       entries={entries}
                       maxSlot={maxSlot}
                       getCellClass={(day, slot) => {
-                        const e = entries.find((e) => e.day === day && e.slot === slot);
+                        const matching = entries.filter((e) => e.day === day && e.slot === slot);
+                        if (matching.length > 1) return "rounded overflow-hidden text-xs";
+                        const e = matching[0];
                         return e?.is_double_staffed
-                          ? "bg-emerald-50 border border-emerald-300"
-                          : "bg-primary/10 border border-primary/20";
+                          ? "rounded px-1.5 py-1 text-xs bg-emerald-50 border border-emerald-300"
+                          : "rounded px-1.5 py-1 text-xs bg-primary/10 border border-primary/20";
                       }}
                       renderCell={(day, slot) => {
-                        const e = entries.find((e) => e.day === day && e.slot === slot);
-                        if (!e) return null;
+                        const matching = entries.filter((e) => e.day === day && e.slot === slot);
+                        if (matching.length === 0) return null;
+                        if (matching.length === 1) {
+                          const e = matching[0];
+                          return (
+                            <>
+                              <div className="font-medium">{e.subject_name}</div>
+                              <div className="text-muted-foreground">
+                                {e.teacher_abbreviation}
+                                {e.is_double_staffed && e.second_teacher_abbreviation && (
+                                  <span className="text-emerald-700"> + {e.second_teacher_abbreviation}</span>
+                                )}
+                              </div>
+                            </>
+                          );
+                        }
                         return (
-                          <>
-                            <div className="font-medium">{e.subject_name}</div>
-                            <div className="text-muted-foreground">
-                              {e.teacher_abbreviation}
-                              {e.is_double_staffed && e.second_teacher_abbreviation && (
-                                <span className="text-emerald-700"> + {e.second_teacher_abbreviation}</span>
-                              )}
-                            </div>
-                          </>
+                          <div className="flex divide-x divide-primary/20">
+                            {matching.map((e, i) => (
+                              <div
+                                key={i}
+                                className={`flex-1 px-1.5 py-1 ${e.is_double_staffed ? "bg-emerald-50" : "bg-primary/10"}`}
+                              >
+                                <div className="font-medium">{e.subject_name}</div>
+                                <div className="text-muted-foreground">
+                                  {e.teacher_abbreviation}
+                                  {e.is_double_staffed && e.second_teacher_abbreviation && (
+                                    <span className="text-emerald-700"> + {e.second_teacher_abbreviation}</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         );
                       }}
                     />
@@ -315,20 +338,48 @@ export function TimetablePage() {
                       entries={entries}
                       maxSlot={maxSlot}
                       getCellClass={(day, slot) => {
-                        const e = entries.find((e) => e.day === day && e.slot === slot);
-                        const isSecondary = e?.is_double_staffed && e.second_teacher_abbreviation === teacher.abbreviation;
+                        const matching = entries.filter((e) => e.day === day && e.slot === slot);
+                        const e = matching[0];
+                        if (!e) return "rounded px-1.5 py-1 text-xs bg-primary/10 border border-primary/20";
+                        const isSecondary = e.is_double_staffed && e.second_teacher_abbreviation === teacher.abbreviation;
                         return isSecondary
-                          ? "bg-emerald-50 border border-emerald-300"
-                          : "bg-primary/10 border border-primary/20";
+                          ? "rounded px-1.5 py-1 text-xs bg-emerald-50 border border-emerald-300"
+                          : "rounded px-1.5 py-1 text-xs bg-primary/10 border border-primary/20";
                       }}
                       renderCell={(day, slot) => {
-                        const e = entries.find((e) => e.day === day && e.slot === slot);
-                        if (!e) return null;
+                        const matching = entries.filter((e) => e.day === day && e.slot === slot);
+                        if (matching.length === 0) return null;
+                        if (matching.length === 1) {
+                          const e = matching[0];
+                          return (
+                            <>
+                              <div className="font-medium">{e.subject_name}</div>
+                              <div className="text-muted-foreground">{e.class_name}</div>
+                            </>
+                          );
+                        }
+                        // Coupled group: same subject taught to multiple classes → single tile
+                        const allSameSubject = matching.every((e) => e.subject_id === matching[0].subject_id);
+                        if (allSameSubject) {
+                          const names = matching.map((e) => e.class_name);
+                          const classLabel = names.length === 2 ? names.join(" + ") : names.join(", ");
+                          return (
+                            <>
+                              <div className="font-medium">{matching[0].subject_name}</div>
+                              <div className="text-muted-foreground">{classLabel}</div>
+                            </>
+                          );
+                        }
+                        // Fallback: different subjects at same slot (edge case)
                         return (
-                          <>
-                            <div className="font-medium">{e.subject_name}</div>
-                            <div className="text-muted-foreground">{e.class_name}</div>
-                          </>
+                          <div className="flex divide-x divide-primary/20">
+                            {matching.map((e, i) => (
+                              <div key={i} className="flex-1 px-1.5 py-1 bg-primary/10">
+                                <div className="font-medium">{e.subject_name}</div>
+                                <div className="text-muted-foreground">{e.class_name}</div>
+                              </div>
+                            ))}
+                          </div>
                         );
                       }}
                     />
@@ -372,12 +423,12 @@ function TimetableGrid({
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
+          <table className="w-full text-sm border-collapse table-fixed">
             <thead>
               <tr className="bg-muted/50">
                 <th className="text-left p-2 font-medium border-b border-r w-16">Std.</th>
                 {WEEKDAYS.map((wd) => (
-                  <th key={wd.value} className="text-center p-2 font-medium border-b border-r min-w-[100px]">
+                  <th key={wd.value} className="text-center p-2 font-medium border-b border-r">
                     {wd.label}
                   </th>
                 ))}
@@ -394,7 +445,7 @@ function TimetableGrid({
                     return (
                       <td key={day} className="p-1 border-r align-top">
                         {hasEntry ? (
-                          <div className={`rounded px-1.5 py-1 text-xs ${getCellClass ? getCellClass(day, slot) : "bg-primary/10 border border-primary/20"}`}>
+                          <div className={getCellClass ? getCellClass(day, slot) : "rounded px-1.5 py-1 text-xs bg-primary/10 border border-primary/20"}>
                             {renderCell(day, slot)}
                           </div>
                         ) : (
