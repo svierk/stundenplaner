@@ -22,7 +22,85 @@ import { useToast } from "@/hooks/use-toast";
 import { generateTimetable } from "@/utils/scheduler";
 import { exportTimetableToExcel } from "@/utils/excel-export";
 import { WEEKDAYS } from "@/types";
-import type { Timetable, TimetableEntry, Weekday } from "@/types";
+import type { Subject, Timetable, TimetableEntry, Weekday } from "@/types";
+
+function isValidSwap(
+  src: TimetableEntry,
+  tgt: TimetableEntry,
+  allEntries: TimetableEntry[],
+  subjects: Subject[],
+): boolean {
+  const sS = subjects.find((s) => s.id === src.subject_id);
+  const sT = subjects.find((s) => s.id === tgt.subject_id);
+  if (!sS || !sT) return true;
+
+  const { day: dS, slot: slS } = src;
+  const { day: dT, slot: slT } = tgt;
+
+  // Remaining entries at each slot after the swap (the departing entry is gone)
+  const atTargetAfter = allEntries.filter((e) => e.day === dT && e.slot === slT && e.id !== tgt.id);
+  const atSourceAfter = allEntries.filter((e) => e.day === dS && e.slot === slS && e.id !== src.id);
+
+  // ── Source subject moving to target slot ─────────────────────────────────
+
+  if (sS.allowed_days.length > 0 && !sS.allowed_days.includes(dT)) return false;
+  if (sS.allowed_slots.length > 0 && !sS.allowed_slots.includes(slT)) return false;
+
+  // Coupled groups can't be partially moved — one class can't be separated from the others
+  if (sS.coupled_class_ids.length > 0) return false;
+
+  // Parallel partner must already be present at the target slot for the same class
+  if (sS.parallel_partner_subject_id !== null) {
+    const ok = atTargetAfter.some(
+      (e) => e.class_id === src.class_id && e.subject_id === sS.parallel_partner_subject_id,
+    );
+    if (!ok) return false;
+  }
+
+  if (sS.no_parallel_classes) {
+    // No other class may have the same subject at the target slot
+    if (atTargetAfter.some((e) => e.subject_id === sS.id && e.class_id !== src.class_id)) return false;
+    // No explicitly listed subject may be at the target slot
+    if (sS.no_parallel_subject_ids.some((id) => atTargetAfter.some((e) => e.subject_id === id)))
+      return false;
+  }
+
+  if (sS.no_double_periods) {
+    const othersOnDay = allEntries.filter(
+      (e) => e.class_id === src.class_id && e.subject_id === sS.id && e.day === dT && e.id !== src.id,
+    );
+    if (othersOnDay.some((e) => Math.abs(e.slot - slT) === 1)) return false;
+  }
+
+  // ── Target subject moving to source slot ─────────────────────────────────
+
+  if (sT.allowed_days.length > 0 && !sT.allowed_days.includes(dS)) return false;
+  if (sT.allowed_slots.length > 0 && !sT.allowed_slots.includes(slS)) return false;
+
+  if (sT.coupled_class_ids.length > 0) return false;
+
+  if (sT.parallel_partner_subject_id !== null) {
+    const ok = atSourceAfter.some(
+      (e) => e.class_id === tgt.class_id && e.subject_id === sT.parallel_partner_subject_id,
+    );
+    if (!ok) return false;
+  }
+
+  if (sT.no_parallel_classes) {
+    if (atSourceAfter.some((e) => e.subject_id === sT.id && e.class_id !== tgt.class_id)) return false;
+    if (sT.no_parallel_subject_ids.some((id) => atSourceAfter.some((e) => e.subject_id === id)))
+      return false;
+  }
+
+  if (sT.no_double_periods) {
+    const othersOnDay = allEntries.filter(
+      (e) => e.class_id === tgt.class_id && e.subject_id === sT.id && e.day === dS && e.id !== tgt.id,
+    );
+    if (othersOnDay.some((e) => Math.abs(e.slot - slS) === 1)) return false;
+  }
+
+  return true;
+}
 
 export function TimetablePage() {
   const { subjects, fetch: fetchSubjects } = useSubjectStore();
@@ -340,6 +418,7 @@ export function TimetablePage() {
                         if (matching.length !== 1) return;
                         if (matching[0].teacher_id !== de.teacher_id) return;
                         if (matching[0].id === de.id) return;
+                        if (!isValidSwap(de, matching[0], allEntries, subjects)) return;
                         swapEntries(de.id, matching[0].id).catch((err) => {
                           toast({ variant: "destructive", title: "Fehler beim Tauschen", description: String(err) });
                         });
@@ -354,6 +433,7 @@ export function TimetablePage() {
                         const matching = entries.filter((e) => e.day === day && e.slot === slot);
                         if (matching.length !== 1) return null;
                         if (matching[0].teacher_id !== dragEntry.teacher_id) return null;
+                        if (!isValidSwap(dragEntry, matching[0], allEntries, subjects)) return null;
                         return "valid-target";
                       }}
                     />
