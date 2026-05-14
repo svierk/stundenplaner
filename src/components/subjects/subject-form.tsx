@@ -54,6 +54,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
   const [noDoublePeriods, setNoDoublePeriods] = useState(initial?.no_double_periods ?? false);
   const [noDoubleStaffing, setNoDoubleStaffing] = useState(initial?.no_double_staffing ?? false);
   const [noRepeatPerDay, setNoRepeatPerDay] = useState(initial?.no_repeat_per_day ?? false);
+  const [mustBeBoundary, setMustBeBoundary] = useState(initial?.must_be_boundary ?? false);
   const [noParallelClasses, setNoParallelClasses] = useState(initial?.no_parallel_classes ?? false);
   const [noParallelSubjectIds, setNoParallelSubjectIds] = useState<number[]>(
     initial?.no_parallel_subject_ids ?? [],
@@ -61,9 +62,14 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
   const [coupledClassIds, setCoupledClassIds] = useState<number[]>(
     initial?.coupled_class_ids ?? [],
   );
-  const [parallelPartnerId, setParallelPartnerId] = useState<number | null>(
-    initial?.parallel_partner_subject_id ?? null,
+  const [parallelPartnerIds, setParallelPartnerIds] = useState<number[]>(
+    initial?.parallel_partner_subject_ids ?? [],
   );
+
+  const toggleParallelPartner = (id: number) =>
+    setParallelPartnerIds((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
+    );
   const [saving, setSaving] = useState(false);
 
   const otherSubjects = allSubjects.filter((s) => s.id !== initial?.id);
@@ -123,10 +129,11 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
         no_double_periods: noDoublePeriods,
         no_double_staffing: noDoubleStaffing,
         no_repeat_per_day: noRepeatPerDay,
+        must_be_boundary: mustBeBoundary,
         no_parallel_classes: noParallelClasses,
         no_parallel_subject_ids: noParallelClasses ? noParallelSubjectIds : [],
         coupled_class_ids: coupledClassIds,
-        parallel_partner_subject_id: parallelPartnerId,
+        parallel_partner_subject_ids: parallelPartnerIds,
       });
       onClose();
     } catch {
@@ -299,6 +306,13 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
                 />
                 <span className="text-sm">Nicht mehrfach am gleichen Tag</span>
               </label>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <Checkbox
+                  checked={mustBeBoundary}
+                  onCheckedChange={(v) => setMustBeBoundary(!!v)}
+                />
+                <span className="text-sm">Muss Randstunde sein</span>
+              </label>
             </div>
           </div>
 
@@ -368,26 +382,30 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
               )}
             </div>
 
-            {/* Option B – paralleles Partnerfach pro Klasse (Fall 1 & 3) */}
+            {/* Option B – parallele Partnerfächer pro Klasse (Fall 1 & 3) */}
             <div className="space-y-1.5">
               <Label className="text-sm">
-                Findet parallel zu folgendem Fach statt (pro Klasse, eigene Lehrkraft)
-                <span className="text-muted-foreground font-normal"> (Pflichtbedingung)</span>
+                Findet parallel zu folgenden Fächern statt (pro Klasse, eigene Lehrkraft)
+                <span className="text-muted-foreground font-normal"> (Pflichtbedingung, Mehrfachauswahl möglich)</span>
               </Label>
-              <Select
-                value={parallelPartnerId !== null ? String(parallelPartnerId) : "none"}
-                onValueChange={(v) => setParallelPartnerId(v === "none" ? null : Number(v))}
-              >
-                <SelectTrigger className="bg-white">
-                  <SelectValue placeholder="Kein Partnerfach" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">– Kein Partnerfach –</SelectItem>
+              {otherSubjects.length === 0 ? (
+                <p className="text-xs text-muted-foreground pl-1">Noch keine anderen Fächer vorhanden.</p>
+              ) : (
+                <div className="rounded-md border border-gray-200 p-2 max-h-32 overflow-y-auto space-y-1 bg-white">
                   {otherSubjects.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                    <label
+                      key={s.id}
+                      className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-blue-50 transition-colors"
+                    >
+                      <Checkbox
+                        checked={parallelPartnerIds.includes(s.id)}
+                        onCheckedChange={() => toggleParallelPartner(s.id)}
+                      />
+                      <span className="text-sm">{s.name}</span>
+                    </label>
                   ))}
-                </SelectContent>
-              </Select>
+                </div>
+              )}
             </div>
           </div>
         </div>

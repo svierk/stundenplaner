@@ -244,6 +244,18 @@ pub fn get_migrations() -> Vec<Migration> {
             sql: "ALTER TABLE subjects ADD COLUMN no_repeat_per_day INTEGER NOT NULL DEFAULT 0;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 16,
+            description: "add_warnings_to_timetables",
+            sql: "ALTER TABLE timetables ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]';",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 17,
+            description: "add_must_be_boundary_to_subjects",
+            sql: "ALTER TABLE subjects ADD COLUMN must_be_boundary INTEGER NOT NULL DEFAULT 0;",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

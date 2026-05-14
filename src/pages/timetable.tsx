@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { CalendarDays, Play, Download, Trash2, AlertTriangle } from "lucide-react";
+import { CalendarDays, Play, Download, Trash2, AlertTriangle, ChevronDown, Loader2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
@@ -49,12 +49,10 @@ function isValidSwap(
   // Coupled groups can't be partially moved — one class can't be separated from the others
   if (sS.coupled_class_ids.length > 0) return false;
 
-  // Parallel partner must already be present at the target slot for the same class
-  if (sS.parallel_partner_subject_id !== null) {
-    const ok = atTargetAfter.some(
-      (e) => e.class_id === src.class_id && e.subject_id === sS.parallel_partner_subject_id,
-    );
-    if (!ok) return false;
+  // All parallel partners must already be present at the target slot for the same class
+  for (const pId of sS.parallel_partner_subject_ids) {
+    if (!atTargetAfter.some((e) => e.class_id === src.class_id && e.subject_id === pId))
+      return false;
   }
 
   if (sS.no_parallel_classes) {
@@ -84,11 +82,9 @@ function isValidSwap(
 
   if (sT.coupled_class_ids.length > 0) return false;
 
-  if (sT.parallel_partner_subject_id !== null) {
-    const ok = atSourceAfter.some(
-      (e) => e.class_id === tgt.class_id && e.subject_id === sT.parallel_partner_subject_id,
-    );
-    if (!ok) return false;
+  for (const pId of sT.parallel_partner_subject_ids) {
+    if (!atSourceAfter.some((e) => e.class_id === tgt.class_id && e.subject_id === pId))
+      return false;
   }
 
   if (sT.no_parallel_classes) {
@@ -121,7 +117,7 @@ export function TimetablePage() {
   const { toast } = useToast();
 
   const [generating, setGenerating] = useState(false);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [warningsOpen, setWarningsOpen] = useState(false);
   const [schoolYear, setSchoolYear] = useState(`${new Date().getFullYear()}/${new Date().getFullYear() + 1}`);
   const [viewMode, setViewMode] = useState<"classes" | "teachers">("classes");
   const [selectedClassName, setSelectedClassName] = useState<string>("all");
@@ -138,6 +134,9 @@ export function TimetablePage() {
     fetchGradeLevelConfigs();
   }, [fetchSubjects, fetchTeachers, fetchClasses, fetchTimetables, fetchGradeLevelConfigs]);
 
+  // Collapse warnings panel whenever the active timetable changes
+  useEffect(() => { setWarningsOpen(false); }, [activeTimetable?.id]);
+
   const handleGenerate = async () => {
     if (teachers.length === 0 || classes.length === 0 || subjects.length === 0) {
       toast({
@@ -151,14 +150,13 @@ export function TimetablePage() {
     setGenerating(true);
     try {
       const result = generateTimetable(teachers, classes, subjects, gradeLevelConfigs);
-      setWarnings(result.warnings);
 
       const now = new Date();
       const date = now.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
       const time = now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
       const name = `Stundenplan ${schoolYear} (erstellt am ${date} ${time})`;
 
-      const id = await saveTimetable(name, schoolYear, result.entries);
+      const id = await saveTimetable(name, schoolYear, result.entries, result.warnings);
       // saveTimetable calls fetch() internally — read from live store state, not the stale closure
       const fresh = useTimetableStore.getState().timetables.find((t) => t.id === id);
       if (fresh) setActive(fresh);
@@ -228,7 +226,9 @@ export function TimetablePage() {
             </Button>
           )}
           <Button onClick={handleGenerate} disabled={generating}>
-            <Play className="h-4 w-4" />
+            {generating
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <Play className="h-4 w-4" />}
             {generating ? "Generieren..." : "Stundenplan generieren"}
           </Button>
         </div>
@@ -271,17 +271,25 @@ export function TimetablePage() {
         </div>
       </div>
 
-      {warnings.length > 0 && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 space-y-1">
-          <div className="flex items-center gap-2 text-amber-800 font-medium text-sm">
-            <AlertTriangle className="h-4 w-4" />
-            Warnungen
-          </div>
-          {warnings.map((w, i) => (
-            <p key={i} className="text-sm text-amber-700 pl-6">
-              {w}
-            </p>
-          ))}
+      {(activeTimetable?.warnings?.length ?? 0) > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 overflow-hidden">
+          <button
+            onClick={() => setWarningsOpen((o) => !o)}
+            className="w-full flex items-center justify-between px-3 py-2.5 text-amber-800 hover:bg-amber-100 transition-colors"
+          >
+            <div className="flex items-center gap-2 font-medium text-sm">
+              <AlertTriangle className="h-4 w-4" />
+              {activeTimetable!.warnings.length} {activeTimetable!.warnings.length === 1 ? "Warnung" : "Warnungen"}
+            </div>
+            <ChevronDown className={`h-4 w-4 transition-transform ${warningsOpen ? "rotate-180" : ""}`} />
+          </button>
+          {warningsOpen && (
+            <div className="border-t border-amber-200 px-3 py-2 space-y-1">
+              {activeTimetable!.warnings.map((w, i) => (
+                <p key={i} className="text-sm text-amber-700 pl-6">{w}</p>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -393,20 +401,41 @@ export function TimetablePage() {
                             </>
                           );
                         }
+                        if (matching.length === 2) {
+                          return (
+                            <div className="flex divide-x divide-primary/20">
+                              {matching.map((e, i) => (
+                                <div
+                                  key={i}
+                                  className={`flex-1 px-1.5 py-1 ${e.is_double_staffed ? "bg-emerald-50" : "bg-primary/10"}`}
+                                >
+                                  <div className="font-medium">{e.subject_name}</div>
+                                  <div className="text-muted-foreground">
+                                    {e.teacher_abbreviation}
+                                    {e.is_double_staffed && e.second_teacher_abbreviation && (
+                                      <span className="text-emerald-700"> + {e.second_teacher_abbreviation}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
+                        // 3+ subjects: vertical stack so long names are not truncated
                         return (
-                          <div className="flex divide-x divide-primary/20">
+                          <div className="divide-y divide-primary/20">
                             {matching.map((e, i) => (
                               <div
                                 key={i}
-                                className={`flex-1 px-1.5 py-1 ${e.is_double_staffed ? "bg-emerald-50" : "bg-primary/10"}`}
+                                className={`flex items-baseline gap-1 px-1.5 py-0.5 ${e.is_double_staffed ? "bg-emerald-50" : "bg-primary/10"}`}
                               >
-                                <div className="font-medium">{e.subject_name}</div>
-                                <div className="text-muted-foreground">
+                                <span className="font-medium flex-1 min-w-0 truncate">{e.subject_name}</span>
+                                <span className="text-muted-foreground shrink-0">
                                   {e.teacher_abbreviation}
                                   {e.is_double_staffed && e.second_teacher_abbreviation && (
-                                    <span className="text-emerald-700"> + {e.second_teacher_abbreviation}</span>
+                                    <span className="text-emerald-700"> +{e.second_teacher_abbreviation}</span>
                                   )}
-                                </div>
+                                </span>
                               </div>
                             ))}
                           </div>

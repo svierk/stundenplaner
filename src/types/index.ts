@@ -42,13 +42,14 @@ export interface Subject {
   no_double_periods: boolean;
   no_double_staffing: boolean;
   no_repeat_per_day: boolean;
+  must_be_boundary: boolean;
   no_parallel_classes: boolean;
   no_parallel_subject_ids: number[];
   // Parallel scheduling (Cases 1–3):
   // coupled_class_ids: these classes share this subject simultaneously with the same teacher (Cases 2 & 3)
-  // parallel_partner_subject_id: a subject that must be co-scheduled at the same slot per class (Cases 1 & 3)
+  // parallel_partner_subject_ids: subjects that must be co-scheduled at the same slot per class (Cases 1 & 3)
   coupled_class_ids: number[];
-  parallel_partner_subject_id: number | null;
+  parallel_partner_subject_ids: number[];
 }
 
 export interface SubjectFormData {
@@ -60,10 +61,11 @@ export interface SubjectFormData {
   no_double_periods: boolean;
   no_double_staffing: boolean;
   no_repeat_per_day: boolean;
+  must_be_boundary: boolean;
   no_parallel_classes: boolean;
   no_parallel_subject_ids: number[];
   coupled_class_ids: number[];
-  parallel_partner_subject_id: number | null;
+  parallel_partner_subject_ids: number[];
 }
 
 // ─── Teachers ─────────────────────────────────────────────────────────────────
@@ -159,6 +161,7 @@ export interface Timetable {
   name: string;
   generated_at: string;
   school_year: string;
+  warnings: string[];
   entries: TimetableEntry[];
 }
 

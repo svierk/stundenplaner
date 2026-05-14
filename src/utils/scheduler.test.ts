@@ -19,10 +19,12 @@ const makeSubject = (id: number, name: string, gradeLevel: 1 | 2 | 3 | 4 = 1): S
   allowed_slots: [],
   no_double_periods: false,
   no_double_staffing: false,
+  no_repeat_per_day: false,
+  must_be_boundary: false,
   no_parallel_classes: false,
   no_parallel_subject_ids: [],
   coupled_class_ids: [],
-  parallel_partner_subject_id: null,
+  parallel_partner_subject_ids: [],
 });
 
 const makeTeacher = (id: number, allowedSubjectIds: number[]): Teacher => ({
@@ -357,17 +359,17 @@ describe("generateTimetable", () => {
 
   it("places coupled group with partner subject: each class gets own partner teacher at same slot", () => {
     // Scenario: LMS (id=2) coupled for classes 1a+1b+1c, must be parallel to Deutsch (id=1).
-    // DB loads parallel_partner_subject_id bidirectionally, so BOTH subjects reference each other.
+    // DB loads parallel_partner_subject_ids bidirectionally, so BOTH subjects reference each other.
     // LMS.id > Deutsch.id → old skip-logic dropped LMS (Deutsch drove, per-class, different teachers).
     // Fix: coupled subject always drives; its partner is allowed to process freely afterward.
     const deutsch = makeSubject(1, "Deutsch");
     deutsch.grade_configs = [{ id: 1, subject_id: 1, grade_level: 1, hours_per_week: 2 }];
-    deutsch.parallel_partner_subject_id = 2; // bidirectional (as DB loads it)
+    deutsch.parallel_partner_subject_ids = [2]; // bidirectional (as DB loads it)
 
     const lms = makeSubject(2, "LMS");
     lms.grade_configs = [{ id: 2, subject_id: 2, grade_level: 1, hours_per_week: 1 }];
     lms.coupled_class_ids = [1, 2, 3];
-    lms.parallel_partner_subject_id = 1; // Deutsch (id=1 < id=2)
+    lms.parallel_partner_subject_ids = [1]; // Deutsch (id=1 < id=2)
 
     // One LMS teacher
     const tLms = makeTeacher(10, [2]);

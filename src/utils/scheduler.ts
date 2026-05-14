@@ -179,6 +179,22 @@ export function generateTimetable(
   subjects: Subject[],
   gradeLevelConfigs: GradeLevelConfig[],
 ): SchedulerResult {
+  // Run up to 50 times with different random orderings; keep the best result.
+  let best: SchedulerResult | null = null;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const result = _runScheduler(teachers, classes, subjects, gradeLevelConfigs);
+    if (!best || result.warnings.length < best.warnings.length) best = result;
+    if (best.warnings.length === 0) break;
+  }
+  return best!;
+}
+
+function _runScheduler(
+  teachers: Teacher[],
+  classes: SchoolClass[],
+  subjects: Subject[],
+  gradeLevelConfigs: GradeLevelConfig[],
+): SchedulerResult {
   const warnings: string[] = [];
   const entries: Omit<TimetableEntry, "id" | "timetable_id">[] = [];
 
@@ -265,6 +281,10 @@ export function generateTimetable(
     const isAgA = isAgAssignment(a.subject, a.gradeLevel);
     const isAgB = isAgAssignment(b.subject, b.gradeLevel);
     if (isAgA !== isAgB) return isAgA ? 1 : -1;
+    // Boundary subjects (Randstunden) sort after regular subjects but before AGs
+    const isBoundA = !isAgA && a.subject.must_be_boundary;
+    const isBoundB = !isAgB && b.subject.must_be_boundary;
+    if (isBoundA !== isBoundB) return isBoundA ? 1 : -1;
     // Ultra-constrained: coupled group WITH slot restriction — must be placed absolutely first
     // so that no other subject (even a designated one) can claim their required slots.
     const isUCA = a.subject.coupled_class_ids.length > 0 && a.subject.allowed_slots.length > 0;
@@ -273,8 +293,8 @@ export function generateTimetable(
     // Coupled + partner: must drive before the partner's designated teachers fill slots.
     // Without this, the partner (e.g. Deutsch) sorts first via the designation check below
     // and independently co-places the coupled subject per-class with different teachers.
-    const isCPA = a.subject.coupled_class_ids.length > 0 && a.subject.parallel_partner_subject_id !== null;
-    const isCPB = b.subject.coupled_class_ids.length > 0 && b.subject.parallel_partner_subject_id !== null;
+    const isCPA = a.subject.coupled_class_ids.length > 0 && a.subject.parallel_partner_subject_ids.length > 0;
+    const isCPB = b.subject.coupled_class_ids.length > 0 && b.subject.parallel_partner_subject_ids.length > 0;
     if (isCPA !== isCPB) return isCPA ? -1 : 1;
     const hasDesA = teachers.some((t) => isDesignatedForClass(t, a.subject.id, a.cls.id));
     const hasDesB = teachers.some((t) => isDesignatedForClass(t, b.subject.id, b.cls.id));
@@ -336,17 +356,22 @@ export function generateTimetable(
     // Skip follower assignments in coupled groups — handled by the group leader
     if (coupledFollowers.has(`${cls.id}-${subject.id}`)) continue;
 
-    // Skip partner assignments driven by the other side (lower subject-id drives).
-    // Exception: if this subject has coupled_class_ids but the partner does not, this
+    // Skip partner assignments driven by a lower-ID subject in the parallel group.
+    // Exception: if this subject has coupled_class_ids but the driver does not, this
     // subject must always drive so the coupled group is handled by a single leader pass.
-    if (subject.parallel_partner_subject_id !== null) {
-      const pId = subject.parallel_partner_subject_id;
-      if (pId < subject.id) {
-        const partnerSubj = subjects.find((s) => s.id === pId);
-        if (partnerSubj?.parallel_partner_subject_id === subject.id) {
-          const thisCoupled = subject.coupled_class_ids.length > 0;
-          const partnerCoupled = (partnerSubj?.coupled_class_ids.length ?? 0) > 0;
-          if (!(thisCoupled && !partnerCoupled)) continue;
+    // Second exception: if remaining > 0 the driver failed to co-place us (e.g. because
+    // not all partners were available simultaneously); process independently in that case.
+    if (subject.parallel_partner_subject_ids.length > 0) {
+      const drivingPartner = subjects.find(
+        (s) => s.id < subject.id && s.parallel_partner_subject_ids.includes(subject.id),
+      );
+      if (drivingPartner) {
+        const thisCoupled = subject.coupled_class_ids.length > 0;
+        const partnerCoupled = drivingPartner.coupled_class_ids.length > 0;
+        if (!(thisCoupled && !partnerCoupled)) {
+          // Only skip if the driver already placed us (remaining = 0).
+          // If remaining > 0 the driver skipped co-placement; schedule independently.
+          if (assignment.remaining === 0) continue;
         }
       }
     }
@@ -360,6 +385,7 @@ export function generateTimetable(
     const csKey = `${cls.id}-${subject.id}`;
 
     const isAg = isAgAssignment(subject, cls.grade_level);
+    const isBoundary = !isAg && subject.must_be_boundary;
 
     while (remaining > 0) {
       // Read the lock inside the loop so it takes effect from the 2nd hour onward
@@ -411,6 +437,43 @@ export function generateTimetable(
               !!(excluded && [...excluded].some((id) => subjectGlobalSlots.get(id)?.has(sk)));
             if (blocked) continue;
             candidateSlots.push({ day, slot });
+          }
+        }
+      } else if (isBoundary) {
+        // Randstunden: must be placed at the edge of the day (first or last slot).
+        // Unlike AGs they count as regular lessons and don't require the min to be met first.
+        for (const day of shuffle(allowedDays)) {
+          const totalCount = classState.slotsPerDay.get(day) ?? 0;
+          if (totalCount >= gradeMaxSlot) continue;
+
+          const daySlotNums: number[] = [];
+          for (const key of classState.slots) {
+            const [d, s] = key.split("-").map(Number);
+            if (d === day) daySlotNums.push(s);
+          }
+          const globalSlots = subjectGlobalSlots.get(subject.id);
+          const excluded = mutualExclusions.get(subject.id);
+          const isBlocked = (sk: string) =>
+            (subject.no_parallel_classes && !!globalSlots?.has(sk)) ||
+            !!(excluded && [...excluded].some((id) => subjectGlobalSlots.get(id)?.has(sk)));
+
+          if (daySlotNums.length === 0) {
+            // No lessons yet on this day — slot 1 is implicitly a boundary
+            const sk = slotKey(day, 1);
+            if (!classState.slots.has(sk) && (subject.allowed_slots.length === 0 || subject.allowed_slots.includes(1)) && !isBlocked(sk)) {
+              candidateSlots.push({ day, slot: 1 });
+            }
+          } else {
+            const minSl = Math.min(...daySlotNums);
+            const maxSl = Math.max(...daySlotNums);
+            for (const slot of [minSl - 1, maxSl + 1]) {
+              if (slot < 1 || slot > gradeMaxSlot) continue;
+              if (subject.allowed_slots.length > 0 && !subject.allowed_slots.includes(slot)) continue;
+              const sk = slotKey(day, slot);
+              if (classState.slots.has(sk)) continue;
+              if (isBlocked(sk)) continue;
+              candidateSlots.push({ day, slot });
+            }
           }
         }
       } else {
@@ -551,7 +614,7 @@ export function generateTimetable(
       //   3) fairness: lower weighted primary workload (Hauptfach=3, Nebenfach/AG=1)
       //      so that heavy and light subjects are spread evenly across the team
       //   4) remaining capacity as final tiebreaker
-      const eligibleTeachers = teachers
+      const eligibleTeachers = shuffle(teachers)
         .filter((t) => {
           if (lockedTeacherId !== undefined) {
             return (
@@ -594,31 +657,11 @@ export function generateTimetable(
           .filter((f) => f.cls && f.state);
         if (followerClasses.some((f) => f.state.slots.has(sk))) continue;
 
-        // ── Partner-subject pre-check ────────────────────────────────────────
-        // A different teacher for the partner subject must be available at this slot.
-        let partnerTeacher: Teacher | undefined;
-        const partnerId = subject.parallel_partner_subject_id;
-        if (partnerId !== null) {
-          const partnerAssignment = assignments.find(
-            (a) => a.cls.id === cls.id && a.subject.id === partnerId,
-          );
-          if (partnerAssignment && partnerAssignment.remaining > 0) {
-            const partnerCsKey = `${cls.id}-${partnerId}`;
-            const lockedPartner = classSubjectTeacher.get(partnerCsKey);
-            partnerTeacher = teachers.find((t) => {
-              if (lockedPartner !== undefined && t.id !== lockedPartner) return false;
-              if (!canTeachSubject(t, partnerId)) return false;
-              const ts = teacherStates.get(t.id)!;
-              if (effectiveHours(t) <= ts.assignedHours) return false;
-              if (!isTeacherAvailableOnDay(t, day)) return false;
-              if (!isTeacherAvailableAtSlot(t, slot)) return false;
-              if (ts.busySlots.has(sk)) return false;
-              return true; // teacher for primary will be filtered out below
-            });
-            // Partner teacher must be a different person than the primary teacher
-            // We'll enforce this after we know the primary teacher.
-          }
-        }
+        const partnerIds = subject.parallel_partner_subject_ids;
+        // Coupled subjects must always be placed (their slot is constrained); partner
+        // co-placement is best-effort. Non-coupled subjects use a hard constraint:
+        // skip this slot if any partner subject cannot be co-placed.
+        const isCoupledSubject = subject.coupled_class_ids.length > 0;
 
         const teacher = eligibleTeachers.find((t) => {
           if (!isTeacherAvailableOnDay(t, day)) return false;
@@ -629,62 +672,75 @@ export function generateTimetable(
 
         if (!teacher) continue;
 
-        // Re-resolve partner teachers for leader + all follower classes.
-        // Each class needs its own distinct teacher — usedPartnerIds prevents conflicts.
-        const followerPartnerTeachers = new Map<number, Teacher>(); // classId → teacher
-        if (partnerId !== null) {
+        // Re-resolve partner teachers for all partner subjects, leader + follower classes.
+        // Rule: all-or-nothing PER CLASS — each class independently gets either ALL partners
+        // co-placed or NONE. usedPartnerIds is committed only when every partner for a class
+        // is found (tentative reservation prevents double-booking across classes).
+        // Non-coupled primaries: hard constraint — skip slot if the leader class can't get all partners.
+        // Coupled primaries: primary is always placed; per-class partner co-placement is best-effort.
+        const leaderPartnerTeachers = new Map<number, Teacher>();
+        const followerPartnerTeachers = new Map<number, Map<number, Teacher>>();
+        if (partnerIds.length > 0) {
           const usedPartnerIds = new Set<number>([teacher.id]);
 
-          // Leader class
-          const partnerAssignment = assignments.find(
-            (a) => a.cls.id === cls.id && a.subject.id === partnerId,
-          );
-          if (partnerAssignment && partnerAssignment.remaining > 0) {
-            const lockedPartner = classSubjectTeacher.get(`${cls.id}-${partnerId}`);
-            partnerTeacher = teachers
-              .slice()
-              .sort((a, b) => teacherSubjectPriority(a, partnerId, cls.id) - teacherSubjectPriority(b, partnerId, cls.id))
-              .find((t) => {
-                if (usedPartnerIds.has(t.id)) return false;
-                if (lockedPartner !== undefined && t.id !== lockedPartner) return false;
-                if (!canTeachSubject(t, partnerId)) return false;
-                const ts = teacherStates.get(t.id)!;
-                if (effectiveHours(t) <= ts.assignedHours) return false;
-                if (!isTeacherAvailableOnDay(t, day)) return false;
-                if (!isTeacherAvailableAtSlot(t, slot)) return false;
-                return !ts.busySlots.has(sk);
-              });
-            if (!partnerTeacher) continue; // hard constraint: can't place without leader's partner
-            usedPartnerIds.add(partnerTeacher.id);
-          }
-
-          // Follower classes — each needs its own distinct partner teacher
-          if (followerClasses.length > 0) {
-            let followersOk = true;
-            for (const { cls: fCls } of followerClasses) {
-              const fPartnerAss = assignments.find(
-                (a) => a.cls.id === fCls.id && a.subject.id === partnerId && a.remaining > 0,
-              );
-              if (!fPartnerAss) continue; // no partner assignment for this follower, skip
-              const fLockedPartner = classSubjectTeacher.get(`${fCls.id}-${partnerId}`);
-              const fPT = teachers
+          // Helper: try to find all partner teachers for one class.
+          // Uses tentative reservation so usedPartnerIds is only updated on full success.
+          // Returns the map of pId→teacher on success, null on failure (any partner missing).
+          const resolvePartnersForClass = (targetClsId: number): Map<number, Teacher> | null => {
+            const tentative = new Map<number, Teacher>();
+            const tentativeIds: number[] = [];
+            for (const pId of partnerIds) {
+              const pAss = assignments.find((a) => a.cls.id === targetClsId && a.subject.id === pId);
+              if (!pAss || pAss.remaining <= 0) continue; // already placed, no need to co-place
+              const locked = classSubjectTeacher.get(`${targetClsId}-${pId}`);
+              const pt = teachers
                 .slice()
-                .sort((a, b) => teacherSubjectPriority(a, partnerId, fCls.id) - teacherSubjectPriority(b, partnerId, fCls.id))
+                .sort((a, b) => teacherSubjectPriority(a, pId, targetClsId) - teacherSubjectPriority(b, pId, targetClsId))
                 .find((t) => {
                   if (usedPartnerIds.has(t.id)) return false;
-                  if (fLockedPartner !== undefined && t.id !== fLockedPartner) return false;
-                  if (!canTeachSubject(t, partnerId)) return false;
+                  if (tentativeIds.includes(t.id)) return false;
+                  if (locked !== undefined && t.id !== locked) return false;
+                  if (!canTeachSubject(t, pId)) return false;
                   const ts = teacherStates.get(t.id)!;
                   if (effectiveHours(t) <= ts.assignedHours) return false;
                   if (!isTeacherAvailableOnDay(t, day)) return false;
                   if (!isTeacherAvailableAtSlot(t, slot)) return false;
                   return !ts.busySlots.has(sk);
                 });
-              if (!fPT) { followersOk = false; break; }
-              usedPartnerIds.add(fPT.id);
-              followerPartnerTeachers.set(fCls.id, fPT);
+              if (pt) {
+                tentative.set(pId, pt);
+                tentativeIds.push(pt.id);
+              } else {
+                return null; // partner unavailable for this class → skip co-placement
+              }
             }
-            if (!followersOk) continue; // can't find distinct partner teacher for every coupled class
+            // All partners found — commit reservations
+            for (const id of tentativeIds) usedPartnerIds.add(id);
+            return tentative;
+          };
+
+          // Leader class
+          const leaderResult = resolvePartnersForClass(cls.id);
+          if (leaderResult) {
+            for (const [k, v] of leaderResult) leaderPartnerTeachers.set(k, v);
+          } else if (!isCoupledSubject) {
+            continue; // hard constraint: skip slot entirely
+          }
+          // Coupled + no leader partners → primary placed alone, partners get independent pass
+
+          // Follower classes
+          if (followerClasses.length > 0) {
+            let followersOk = true;
+            for (const { cls: fCls } of followerClasses) {
+              const fResult = resolvePartnersForClass(fCls.id);
+              if (fResult) {
+                followerPartnerTeachers.set(fCls.id, fResult);
+              } else if (!isCoupledSubject) {
+                followersOk = false; break;
+              }
+              // Coupled + no follower partners for this class → this class gets primary alone
+            }
+            if (!isCoupledSubject && !followersOk) continue;
           }
         }
 
@@ -752,29 +808,32 @@ export function generateTimetable(
           if (fAssignment) fAssignment.remaining--;
         }
 
-        // ── Place partner subject for leader + all follower classes ─────────────
-        // Each class gets its own distinct partner teacher at the same slot.
-        if (partnerId !== null) {
-          const partnerSubject = subjects.find((s) => s.id === partnerId)!;
+        // ── Place all partner subjects for leader + follower classes ──────────
+        if (partnerIds.length > 0) {
+          for (const pId of partnerIds) {
+            const partnerSubject = subjects.find((s) => s.id === pId);
+            if (!partnerSubject) continue;
 
-          // Leader class
-          if (partnerTeacher) {
-            const pCsKey = `${cls.id}-${partnerId}`;
-            if (!classSubjectTeacher.has(pCsKey)) classSubjectTeacher.set(pCsKey, partnerTeacher.id);
-            recordPlacement(cls, classState, partnerSubject, partnerTeacher, true);
-            const pAss = assignments.find((a) => a.cls.id === cls.id && a.subject.id === partnerId);
-            if (pAss) pAss.remaining--;
-          }
+            // Leader class
+            const pTeacher = leaderPartnerTeachers.get(pId);
+            if (pTeacher) {
+              const pCsKey = `${cls.id}-${pId}`;
+              if (!classSubjectTeacher.has(pCsKey)) classSubjectTeacher.set(pCsKey, pTeacher.id);
+              recordPlacement(cls, classState, partnerSubject, pTeacher, true);
+              const pAss = assignments.find((a) => a.cls.id === cls.id && a.subject.id === pId);
+              if (pAss) pAss.remaining--;
+            }
 
-          // Follower classes
-          for (const { cls: fCls, state: fState } of followerClasses) {
-            const fPT = followerPartnerTeachers.get(fCls.id);
-            if (!fPT) continue;
-            const fPCsKey = `${fCls.id}-${partnerId}`;
-            if (!classSubjectTeacher.has(fPCsKey)) classSubjectTeacher.set(fPCsKey, fPT.id);
-            recordPlacement(fCls, fState, partnerSubject, fPT, true);
-            const fPAss = assignments.find((a) => a.cls.id === fCls.id && a.subject.id === partnerId);
-            if (fPAss) fPAss.remaining--;
+            // Follower classes
+            for (const { cls: fCls, state: fState } of followerClasses) {
+              const fPT = followerPartnerTeachers.get(fCls.id)?.get(pId);
+              if (!fPT) continue;
+              const fPCsKey = `${fCls.id}-${pId}`;
+              if (!classSubjectTeacher.has(fPCsKey)) classSubjectTeacher.set(fPCsKey, fPT.id);
+              recordPlacement(fCls, fState, partnerSubject, fPT, true);
+              const fPAss = assignments.find((a) => a.cls.id === fCls.id && a.subject.id === pId);
+              if (fPAss) fPAss.remaining--;
+            }
           }
         }
 
@@ -819,6 +878,7 @@ export function generateTimetable(
       name: "",
       generated_at: new Date().toISOString(),
       school_year: "",
+      warnings,
     },
     entries,
     warnings,
