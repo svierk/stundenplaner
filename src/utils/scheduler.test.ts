@@ -25,6 +25,7 @@ const makeSubject = (id: number, name: string, gradeLevel: 1 | 2 | 3 | 4 = 1): S
   no_parallel_subject_ids: [],
   coupled_class_ids: [],
   parallel_partner_subject_ids: [],
+  excluded_class_ids: [],
 });
 
 const makeTeacher = (id: number, allowedSubjectIds: number[]): Teacher => ({

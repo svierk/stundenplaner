@@ -39,6 +39,12 @@ export async function getDb(): Promise<Database> {
       partner_subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
       PRIMARY KEY (subject_id, partner_subject_id)
     )`);
+    // Classes for which this subject does not take place (e.g. Kath. Religion for 2a, 3a, 4a)
+    await db.execute(`CREATE TABLE IF NOT EXISTS subject_excluded_classes (
+      subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+      class_id   INTEGER NOT NULL REFERENCES classes(id)  ON DELETE CASCADE,
+      PRIMARY KEY (subject_id, class_id)
+    )`);
     // ALTER TABLE doesn't support IF NOT EXISTS in SQLite; catch the benign "duplicate column" error.
     try {
       await db.execute("ALTER TABLE subjects ADD COLUMN no_double_staffing INTEGER NOT NULL DEFAULT 0");
@@ -76,6 +82,7 @@ type DayRow = { subject_id: number; day: number };
 type SlotRow = { subject_id: number; slot: number };
 type NoParallelRow = { subject_id: number; other_subject_id: number };
 type CoupledClassRow = { subject_id: number; class_id: number };
+type ExcludedClassRow = { subject_id: number; class_id: number };
 type ParallelPartnerRow = { subject_id: number; partner_subject_id: number };
 
 export async function getSubjects(): Promise<Subject[]> {
@@ -100,6 +107,9 @@ export async function getSubjects(): Promise<Subject[]> {
   );
   const coupledClasses = await db.select<CoupledClassRow[]>(
     `SELECT * FROM subject_coupled_classes WHERE subject_id IN (${ids.join(",")})`,
+  );
+  const excludedClasses = await db.select<ExcludedClassRow[]>(
+    `SELECT * FROM subject_excluded_classes WHERE subject_id IN (${ids.join(",")})`,
   );
   // Fetch both directions so both subjects in a partnership show the link
   const parallelPartners = await db.select<ParallelPartnerRow[]>(
@@ -131,6 +141,9 @@ export async function getSubjects(): Promise<Subject[]> {
       coupled_class_ids: coupledClasses
         .filter((c) => c.subject_id === r.id)
         .map((c) => c.class_id),
+      excluded_class_ids: excludedClasses
+        .filter((e) => e.subject_id === r.id)
+        .map((e) => e.class_id),
       parallel_partner_subject_ids: partnerSubjectIds,
       grade_configs: gradeConfigs
         .filter((g) => g.subject_id === r.id)
@@ -177,6 +190,7 @@ export async function updateSubject(id: number, data: SubjectFormData): Promise<
     [id, id],
   );
   await db.execute("DELETE FROM subject_coupled_classes WHERE subject_id = ?", [id]);
+  await db.execute("DELETE FROM subject_excluded_classes WHERE subject_id = ?", [id]);
   await db.execute(
     "DELETE FROM subject_parallel_partner WHERE subject_id = ? OR partner_subject_id = ?",
     [id, id],
@@ -219,6 +233,12 @@ async function _saveSubjectRelations(db: Database, id: number, data: SubjectForm
   for (const classId of data.coupled_class_ids) {
     await db.execute(
       "INSERT OR IGNORE INTO subject_coupled_classes (subject_id, class_id) VALUES (?,?)",
+      [id, classId],
+    );
+  }
+  for (const classId of data.excluded_class_ids) {
+    await db.execute(
+      "INSERT OR IGNORE INTO subject_excluded_classes (subject_id, class_id) VALUES (?,?)",
       [id, classId],
     );
   }

@@ -259,6 +259,7 @@ function _runScheduler(
     for (const subject of subjects) {
       const gradeConfig = subject.grade_configs.find((gc) => gc.grade_level === cls.grade_level);
       if (!gradeConfig || gradeConfig.hours_per_week <= 0) continue;
+      if (subject.excluded_class_ids.includes(cls.id)) continue;
       assignments.push({
         cls,
         subject,
@@ -699,7 +700,7 @@ function _runScheduler(
         // ── Coupled-class pre-check ──────────────────────────────────────────
         // All follower classes must also have this slot free before we commit.
         const followerClasses = subject.coupled_class_ids
-          .filter((id) => id !== cls.id)
+          .filter((id) => id !== cls.id && !subject.excluded_class_ids.includes(id))
           .map((id) => ({ cls: classes.find((c) => c.id === id)!, state: classStates.get(id)! }))
           .filter((f) => f.cls && f.state);
         if (followerClasses.some((f) => f.state.slots.has(sk))) continue;

@@ -62,6 +62,9 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
   const [coupledClassIds, setCoupledClassIds] = useState<number[]>(
     initial?.coupled_class_ids ?? [],
   );
+  const [excludedClassIds, setExcludedClassIds] = useState<number[]>(
+    initial?.excluded_class_ids ?? [],
+  );
   const [parallelPartnerIds, setParallelPartnerIds] = useState<number[]>(
     initial?.parallel_partner_subject_ids ?? [],
   );
@@ -81,6 +84,11 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
 
   const toggleCoupledClass = (id: number) =>
     setCoupledClassIds((prev) =>
+      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id],
+    );
+
+  const toggleExcludedClass = (id: number) =>
+    setExcludedClassIds((prev) =>
       prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id],
     );
 
@@ -133,6 +141,7 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
         no_parallel_classes: noParallelClasses,
         no_parallel_subject_ids: noParallelClasses ? noParallelSubjectIds : [],
         coupled_class_ids: coupledClassIds,
+        excluded_class_ids: excludedClassIds,
         parallel_partner_subject_ids: parallelPartnerIds,
       });
       onClose();
@@ -348,6 +357,32 @@ export function SubjectForm({ open, onClose, onSubmit, initial, allSubjects, all
                     </label>
                   ))}
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Klassenausschlüsse ────────────────────────────────────────── */}
+          <div className="space-y-1.5">
+            <Label>
+              Findet nicht statt in{" "}
+              <span className="text-muted-foreground font-normal">(leer = gilt für alle Klassen der konfigurierten Stufen)</span>
+            </Label>
+            {allClasses.length === 0 ? (
+              <p className="text-xs text-muted-foreground pl-1">Noch keine Klassen angelegt.</p>
+            ) : (
+              <div className="rounded-md border border-gray-200 p-2 max-h-32 overflow-y-auto space-y-1 bg-gray-50">
+                {allClasses.map((c) => (
+                  <label
+                    key={c.id}
+                    className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-red-50 transition-colors"
+                  >
+                    <Checkbox
+                      checked={excludedClassIds.includes(c.id)}
+                      onCheckedChange={() => toggleExcludedClass(c.id)}
+                    />
+                    <span className="text-sm">{c.name}</span>
+                  </label>
+                ))}
               </div>
             )}
           </div>

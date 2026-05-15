@@ -50,6 +50,7 @@ export interface Subject {
   // parallel_partner_subject_ids: subjects that must be co-scheduled at the same slot per class (Cases 1 & 3)
   coupled_class_ids: number[];
   parallel_partner_subject_ids: number[];
+  excluded_class_ids: number[];
 }
 
 export interface SubjectFormData {
@@ -66,6 +67,7 @@ export interface SubjectFormData {
   no_parallel_subject_ids: number[];
   coupled_class_ids: number[];
   parallel_partner_subject_ids: number[];
+  excluded_class_ids: number[];
 }
 
 // ─── Teachers ─────────────────────────────────────────────────────────────────
