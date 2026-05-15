@@ -198,6 +198,10 @@ function _runScheduler(
   const warnings: string[] = [];
   const entries: Omit<TimetableEntry, "id" | "timetable_id">[] = [];
 
+  // Shuffle class order so each attempt explores a different leader/follower assignment
+  // for coupled groups and a different slot-competition order across grades.
+  const workingClasses = shuffle([...classes]);
+
   // Tracks globally used (day, slot) pairs per subject for no_parallel_classes enforcement
   const subjectGlobalSlots = new Map<number, Set<string>>();
 
@@ -251,7 +255,7 @@ function _runScheduler(
   }
 
   const assignments: Assignment[] = [];
-  for (const cls of classes) {
+  for (const cls of workingClasses) {
     for (const subject of subjects) {
       const gradeConfig = subject.grade_configs.find((gc) => gc.grade_level === cls.grade_level);
       if (!gradeConfig || gradeConfig.hours_per_week <= 0) continue;
@@ -350,11 +354,24 @@ function _runScheduler(
     .sort((a, b) => a.grade_level !== b.grade_level ? a.grade_level - b.grade_level : a.name.localeCompare(b.name))
     .forEach((c, i) => classRank.set(c.id, i));
 
+  // ── Round-robin main scheduling loop ────────────────────────────────────────
+  // Each outer iteration places at most ONE hour per assignment, cycling through
+  // all assignments before repeating. This prevents highly-constrained assignments
+  // from monopolising teacher slots before later assignments have had a chance to
+  // claim their few valid positions. The loop exits when no assignment makes
+  // progress in a full cycle (either all placed or truly stuck).
+  let mainLoopProgress = true;
+  while (mainLoopProgress) {
+    mainLoopProgress = false;
+
   for (const assignment of assignments) {
     const { cls, subject } = assignment;
 
     // Skip follower assignments in coupled groups — handled by the group leader
     if (coupledFollowers.has(`${cls.id}-${subject.id}`)) continue;
+
+    // Skip if this assignment is already fully placed
+    if (assignment.remaining <= 0) continue;
 
     // Skip partner assignments driven by a lower-ID subject in the parallel group.
     // Exception: if this subject has coupled_class_ids but the driver does not, this
@@ -376,7 +393,6 @@ function _runScheduler(
       }
     }
 
-    let remaining = assignment.remaining;
     const classState = classStates.get(cls.id)!;
     const allowedDays = getSubjectAllowedDays(subject);
     const gradeMaxSlot = maxHoursPerDayByGrade.get(cls.grade_level) ?? 6;
@@ -387,8 +403,8 @@ function _runScheduler(
     const isAg = isAgAssignment(subject, cls.grade_level);
     const isBoundary = !isAg && subject.must_be_boundary;
 
-    while (remaining > 0) {
-      // Read the lock inside the loop so it takes effect from the 2nd hour onward
+    {
+      // Read the lock fresh every round so it takes effect from the 2nd hour onward
       const lockedTeacherId = classSubjectTeacher.get(csKey);
       let placed = false;
 
@@ -614,8 +630,31 @@ function _runScheduler(
       //   3) fairness: lower weighted primary workload (Hauptfach=3, Nebenfach/AG=1)
       //      so that heavy and light subjects are spread evenly across the team
       //   4) remaining capacity as final tiebreaker
-      const eligibleTeachers = shuffle(teachers)
-        .filter((t) => {
+      const sortTeachers = (list: Teacher[]) =>
+        list.sort((a, b) => {
+          if (lockedTeacherId !== undefined) {
+            if (a.id === lockedTeacherId && b.id !== lockedTeacherId) return -1;
+            if (b.id === lockedTeacherId && a.id !== lockedTeacherId) return 1;
+          }
+          const prioA = teacherSubjectPriority(a, subject.id, cls.id);
+          const prioB = teacherSubjectPriority(b, subject.id, cls.id);
+          if (prioA !== prioB) return prioA - prioB;
+          const stateA = teacherStates.get(a.id)!;
+          const stateB = teacherStates.get(b.id)!;
+          const freesA = countTeacherFreePeriods(stateA);
+          const freesB = countTeacherFreePeriods(stateB);
+          if (freesA !== freesB) return freesA - freesB;
+          const capA = effectiveHours(a) || 1;
+          const capB = effectiveHours(b) || 1;
+          const loadA = (stateA.mainHours * 3 + stateA.minorHours + stateA.agHours) / capA;
+          const loadB = (stateB.mainHours * 3 + stateB.minorHours + stateB.agHours) / capB;
+          if (Math.abs(loadA - loadB) > 0.05) return loadA - loadB;
+          return (effectiveHours(b) - stateB.assignedHours) - (effectiveHours(a) - stateA.assignedHours);
+        });
+
+      // Build initial eligible list respecting the teacher lock.
+      let eligibleTeachers = sortTeachers(
+        shuffle(teachers).filter((t) => {
           if (lockedTeacherId !== undefined) {
             return (
               t.id === lockedTeacherId &&
@@ -625,25 +664,33 @@ function _runScheduler(
           if (!canTeachSubject(t, subject.id)) return false;
           if (effectiveHours(t) <= (teacherStates.get(t.id)?.assignedHours ?? 0)) return false;
           return true;
-        })
-        .sort((a, b) => {
-          const prioA = teacherSubjectPriority(a, subject.id, cls.id);
-          const prioB = teacherSubjectPriority(b, subject.id, cls.id);
-          if (prioA !== prioB) return prioA - prioB;
-          const stateA = teacherStates.get(a.id)!;
-          const stateB = teacherStates.get(b.id)!;
-          const freesA = countTeacherFreePeriods(stateA);
-          const freesB = countTeacherFreePeriods(stateB);
-          if (freesA !== freesB) return freesA - freesB;
-          // Weighted primary workload: Hauptfach counts 3×, everything else 1×.
-          // Normalised by capacity so teachers with different weekly hours are comparable.
-          const capA = effectiveHours(a) || 1;
-          const capB = effectiveHours(b) || 1;
-          const loadA = (stateA.mainHours * 3 + stateA.minorHours + stateA.agHours) / capA;
-          const loadB = (stateB.mainHours * 3 + stateB.minorHours + stateB.agHours) / capB;
-          if (Math.abs(loadA - loadB) > 0.05) return loadA - loadB;
-          return (effectiveHours(b) - stateB.assignedHours) - (effectiveHours(a) - stateA.assignedHours);
+        }),
+      );
+
+      // Lock-relaxation: if the locked teacher is exhausted OR busy at every candidate slot,
+      // fall back to any eligible teacher (locked teacher still sorted first for consistency).
+      if (lockedTeacherId !== undefined) {
+        const lockedT = teachers.find((t) => t.id === lockedTeacherId);
+        const lockedExhausted = !lockedT ||
+          effectiveHours(lockedT) <= (teacherStates.get(lockedTeacherId)?.assignedHours ?? 0);
+        const lockedBusy = !lockedExhausted && !candidateSlots.some(({ day: cd, slot: cs }) => {
+          const ts = teacherStates.get(lockedTeacherId)!;
+          return (
+            !ts.busySlots.has(slotKey(cd, cs)) &&
+            isTeacherAvailableOnDay(lockedT!, cd) &&
+            isTeacherAvailableAtSlot(lockedT!, cs)
+          );
         });
+        if (lockedExhausted || lockedBusy) {
+          eligibleTeachers = sortTeachers(
+            shuffle(teachers).filter((t) => {
+              if (!canTeachSubject(t, subject.id)) return false;
+              if (effectiveHours(t) <= (teacherStates.get(t.id)?.assignedHours ?? 0)) return false;
+              return true;
+            }),
+          );
+        }
+      }
 
       for (const candidate of candidateSlots) {
         const { day, slot } = candidate;
@@ -693,8 +740,7 @@ function _runScheduler(
               const pAss = assignments.find((a) => a.cls.id === targetClsId && a.subject.id === pId);
               if (!pAss || pAss.remaining <= 0) continue; // already placed, no need to co-place
               const locked = classSubjectTeacher.get(`${targetClsId}-${pId}`);
-              const pt = teachers
-                .slice()
+              const pt = shuffle(teachers)
                 .sort((a, b) => teacherSubjectPriority(a, pId, targetClsId) - teacherSubjectPriority(b, pId, targetClsId))
                 .find((t) => {
                   if (usedPartnerIds.has(t.id)) return false;
@@ -744,10 +790,10 @@ function _runScheduler(
           }
         }
 
-        // Lock this teacher to this class+subject pair on first placement
-        if (!classSubjectTeacher.has(csKey)) {
-          classSubjectTeacher.set(csKey, teacher.id);
-        }
+        // Lock (or update) this teacher to this class+subject pair.
+        // If a fallback teacher was used (lock relaxation), update so subsequent hours
+        // of the same subject for the same class use the same teacher consistently.
+        classSubjectTeacher.set(csKey, teacher.id);
 
         // Helper: record one placed lesson for a class+subject+teacher at (day, slot)
         const recordPlacement = (
@@ -837,18 +883,739 @@ function _runScheduler(
           }
         }
 
-        remaining--;
-        assignment.remaining = remaining; // keep object in sync so partner checks see updated value
+        assignment.remaining--;
         placed = true;
         break;
       }
 
-      if (!placed) {
-        warnings.push(
-          `Konnte nicht alle Stunden für Klasse "${cls.name}", Fach "${subject.name}" einplanen. ` +
-            `${remaining} Stunde(n) nicht zugewiesen.`,
-        );
-        break;
+      if (placed) mainLoopProgress = true;
+    }
+  }
+
+  } // end while (mainLoopProgress)
+
+  // Diagnose why an assignment could not be placed (called only for unresolved warnings).
+  const diagnoseFailure = (assignment: { cls: SchoolClass; subject: Subject; remaining: number; gradeLevel: GradeLevel }): string => {
+    const { cls: dCls, subject: dSubj } = assignment;
+    const dState = classStates.get(dCls.id)!;
+    const dGradeMax = maxHoursPerDayByGrade.get(dCls.grade_level) ?? 6;
+    const dGradeMin = minHoursPerDayByGrade.get(dCls.grade_level) ?? 4;
+    const dIsAg = isAgAssignment(dSubj, dCls.grade_level);
+    const dCsKey = `${dCls.id}-${dSubj.id}`;
+    const dLockedId = classSubjectTeacher.get(dCsKey);
+    const dAllowedDays = getSubjectAllowedDays(dSubj);
+    const dAllowedSlots = getSubjectAllowedSlots(dSubj, dGradeMax);
+
+    const eligible = teachers.filter((t) => {
+      if (dLockedId !== undefined) return t.id === dLockedId;
+      return canTeachSubject(t, dSubj.id);
+    });
+    if (eligible.length === 0) return "Keine Lehrkraft für dieses Fach konfiguriert.";
+
+    const withCapacity = eligible.filter((t) => effectiveHours(t) > (teacherStates.get(t.id)?.assignedHours ?? 0));
+    if (withCapacity.length === 0) {
+      const abbrs = eligible.map((t) => t.abbreviation).join(", ");
+      return `Lehrkraft-Kapazität erschöpft (${abbrs}).`;
+    }
+
+    let anyValidDay = false;
+    let anyFreeClassSlot = false;
+    let anyFreeTeacherSlot = false;
+    let blockedByParallel = false;
+
+    for (const day of dAllowedDays) {
+      const dayTotal = dState.slotsPerDay.get(day) ?? 0;
+      if (dayTotal >= dGradeMax) continue;
+      if (dIsAg) {
+        const nonAg = dState.nonAgSlotsPerDay.get(day) ?? 0;
+        if (nonAg < dGradeMin) continue;
+      }
+      anyValidDay = true;
+
+      for (const slot of dAllowedSlots) {
+        const sk = slotKey(day, slot);
+        if (dState.slots.has(sk)) continue;
+        anyFreeClassSlot = true;
+
+        const globalSlots = subjectGlobalSlots.get(dSubj.id);
+        const excluded = mutualExclusions.get(dSubj.id);
+        const isParallelBlocked =
+          (dSubj.no_parallel_classes && !!globalSlots?.has(sk)) ||
+          !!(excluded && [...excluded].some((id) => subjectGlobalSlots.get(id)?.has(sk)));
+        if (isParallelBlocked) { blockedByParallel = true; continue; }
+
+        for (const t of withCapacity) {
+          const ts = teacherStates.get(t.id)!;
+          if (isTeacherAvailableOnDay(t, day) && isTeacherAvailableAtSlot(t, slot) && !ts.busySlots.has(sk)) {
+            anyFreeTeacherSlot = true;
+            break;
+          }
+        }
+        if (anyFreeTeacherSlot) break;
+      }
+      if (anyFreeTeacherSlot) break;
+    }
+
+    if (!anyValidDay) {
+      return dIsAg
+        ? "Kein Wochentag hat genug Pflicht-Stunden für AG-Platzierung (Minimum noch nicht erreicht)."
+        : "Keine erlaubten Wochentage mehr verfügbar (alle voll belegt).";
+    }
+    if (!anyFreeClassSlot && blockedByParallel) return "Alle verfügbaren Slots durch Parallelunterricht-Einschränkung blockiert.";
+    if (!anyFreeClassSlot) return "Alle erlaubten Unterrichtsstunden für diese Klasse sind bereits belegt.";
+    if (blockedByParallel) return `Lehrkraft (${withCapacity.map((t) => t.abbreviation).join(", ")}) zur selben Zeit anderweitig verplant; freie Slots durch Parallelunterricht blockiert.`;
+    return `Lehrkraft (${withCapacity.map((t) => t.abbreviation).join(", ")}) zur selben Zeit in einer anderen Klasse eingeplant.`;
+  };
+
+  // Emit warnings for assignments that could not be fully placed.
+  for (const assignment of assignments) {
+    if (assignment.remaining <= 0) continue;
+    const { cls, subject } = assignment;
+    if (coupledFollowers.has(`${cls.id}-${subject.id}`)) continue;
+    // Only warn for assignments that are responsible for placing themselves
+    // (partners driven by a lower-ID subject emit no independent warning).
+    if (subject.parallel_partner_subject_ids.length > 0) {
+      const drivingPartner = subjects.find(
+        (s) => s.id < subject.id && s.parallel_partner_subject_ids.includes(subject.id),
+      );
+      if (drivingPartner) {
+        const thisCoupled = subject.coupled_class_ids.length > 0;
+        const partnerCoupled = drivingPartner.coupled_class_ids.length > 0;
+        if (!(thisCoupled && !partnerCoupled)) continue;
+      }
+    }
+    const reason = diagnoseFailure(assignment);
+    warnings.push(
+      `Klasse "${cls.name}", Fach "${subject.name}": ${assignment.remaining} Stunde(n) nicht einplanbar. ${reason}`,
+    );
+  }
+
+  // ── Repair phase ──────────────────────────────────────────────────────────────
+  // For each still-unplaced assignment, try to free up a valid slot by moving a
+  // blocking entry (the teacher's existing lesson at that slot) to another location.
+  // Runs up to 5 rounds or until no further progress can be made.
+
+  // Returns true if removing `slot` from `day` and adding `toSlot` on `toDay` for
+  // the given class both preserve the no-free-periods consecutive block invariant.
+  const repairMoveOk = (
+    blockClassState: ClassState,
+    blockCls: SchoolClass,
+    fromDay: Weekday, fromSlot: number,
+    toDay: Weekday, toSlot: number,
+  ): boolean => {
+    if (blockCls.allow_free_periods) return true;
+    const consecutive = (nums: number[]) => {
+      if (nums.length <= 1) return true;
+      const s = [...nums].sort((a, b) => a - b);
+      return s.every((v, i) => i === 0 || v === s[i - 1] + 1);
+    };
+    // After removal from fromDay
+    const afterRemoval: number[] = [];
+    for (const key of blockClassState.slots) {
+      const [d, s] = key.split("-").map(Number);
+      if (d === fromDay && s !== fromSlot) afterRemoval.push(s);
+    }
+    if (!consecutive(afterRemoval)) return false;
+    // After addition to toDay
+    const afterAdd: number[] = [];
+    for (const key of blockClassState.slots) {
+      const [d, s] = key.split("-").map(Number);
+      if (d === toDay) afterAdd.push(s);
+    }
+    afterAdd.push(toSlot);
+    return consecutive(afterAdd);
+  };
+
+  // Standalone record helper used by the repair phase (takes explicit day/slot).
+  const repairRecord = (
+    targetCls: SchoolClass,
+    targetState: ClassState,
+    subj: Subject,
+    t: Teacher,
+    rDay: Weekday,
+    rSlot: number,
+    countTeacherHour: boolean,
+  ) => {
+    const rSk = slotKey(rDay, rSlot);
+    const tState = teacherStates.get(t.id)!;
+    const gc = subj.grade_configs.find((g) => g.grade_level === targetCls.grade_level);
+    const cat = gc?.category_override ?? subj.category;
+    const ag = isAgAssignment(subj, targetCls.grade_level);
+    entries.push({
+      class_id: targetCls.id, subject_id: subj.id, teacher_id: t.id,
+      day: rDay, slot: rSlot, is_double_staffed: false,
+      class_name: targetCls.name, subject_name: subj.name,
+      teacher_abbreviation: t.abbreviation, teacher_name: `${t.first_name} ${t.last_name}`,
+    });
+    if (countTeacherHour) {
+      tState.assignedHours++;
+      if (cat === "main") tState.mainHours++;
+      else if (cat === "activity") tState.agHours++;
+      else tState.minorHours++;
+    }
+    tState.busySlots.add(rSk);
+    targetState.slots.add(rSk);
+    targetState.slotsPerDay.set(rDay, (targetState.slotsPerDay.get(rDay) ?? 0) + 1);
+    if (!ag) targetState.nonAgSlotsPerDay.set(rDay, (targetState.nonAgSlotsPerDay.get(rDay) ?? 0) + 1);
+    targetState.hoursAssigned.set(subj.id, (targetState.hoursAssigned.get(subj.id) ?? 0) + 1);
+    const sdKey = `${subj.id}-${rDay}`;
+    if (!targetState.subjectDaySlots.has(sdKey)) targetState.subjectDaySlots.set(sdKey, new Set());
+    targetState.subjectDaySlots.get(sdKey)!.add(rSlot);
+    if (!subjectGlobalSlots.has(subj.id)) subjectGlobalSlots.set(subj.id, new Set());
+    subjectGlobalSlots.get(subj.id)!.add(rSk);
+  };
+
+  for (let repairRound = 0; repairRound < 10; repairRound++) {
+    let anyProgress = false;
+
+    for (const assignment of shuffle(assignments.slice())) {
+      if (assignment.remaining <= 0) continue;
+      if (coupledFollowers.has(`${assignment.cls.id}-${assignment.subject.id}`)) continue;
+
+      const { cls, subject } = assignment;
+      const classState = classStates.get(cls.id)!;
+      const gradeMaxSlot = maxHoursPerDayByGrade.get(cls.grade_level) ?? 6;
+      const allowedDays = getSubjectAllowedDays(subject);
+      const allowedSlots = getSubjectAllowedSlots(subject, gradeMaxSlot);
+      const isAg = isAgAssignment(subject, cls.grade_level);
+      const isBoundary = !isAg && subject.must_be_boundary;
+      const csKey = `${cls.id}-${subject.id}`;
+      const lockedTeacherId = classSubjectTeacher.get(csKey);
+
+      let placed = false;
+
+      for (const targetDay of shuffle(allowedDays)) {
+        if (placed) break;
+        const totalDayCount = classState.slotsPerDay.get(targetDay) ?? 0;
+        if (totalDayCount >= gradeMaxSlot) continue;
+        const sdKey = `${subject.id}-${targetDay}`;
+        if (subject.no_repeat_per_day && (classState.subjectDaySlots.get(sdKey) ?? new Set()).size > 0) continue;
+
+        // Determine candidate target slots (mirrors main-loop logic)
+        const targetSlots: number[] = [];
+        if (isBoundary || isAg) {
+          // AGs require the day to already have enough non-AG lessons (same rule as main loop)
+          if (isAg) {
+            const nonAgCount = classState.nonAgSlotsPerDay.get(targetDay) ?? 0;
+            const gradeMin = minHoursPerDayByGrade.get(cls.grade_level) ?? 4;
+            if (nonAgCount < gradeMin) continue;
+          }
+          const dayNums: number[] = [];
+          for (const key of classState.slots) {
+            const [d, s] = key.split("-").map(Number);
+            if (d === targetDay) dayNums.push(s);
+          }
+          if (dayNums.length === 0) {
+            // AGs cannot be placed on a day with no existing lessons (they need a boundary to attach to)
+            if (!isAg && allowedSlots.includes(1)) targetSlots.push(1);
+          } else {
+            const minS = Math.min(...dayNums);
+            const maxS = Math.max(...dayNums);
+            if (minS - 1 >= 1 && allowedSlots.includes(minS - 1)) targetSlots.push(minS - 1);
+            if (maxS + 1 <= gradeMaxSlot && allowedSlots.includes(maxS + 1)) targetSlots.push(maxS + 1);
+          }
+        } else if (!cls.allow_free_periods) {
+          let dayMin = Infinity;
+          for (const key of classState.slots) {
+            const [d, s] = key.split("-").map(Number);
+            if (d === targetDay) dayMin = Math.min(dayMin, s);
+          }
+          const effectiveStart = dayMin === Infinity ? 1 : dayMin;
+          const nextSlot = effectiveStart + totalDayCount;
+          if (nextSlot <= gradeMaxSlot && allowedSlots.includes(nextSlot)) targetSlots.push(nextSlot);
+          if (dayMin !== Infinity && dayMin - 1 >= 1 && allowedSlots.includes(dayMin - 1)) targetSlots.push(dayMin - 1);
+        } else {
+          for (const s of allowedSlots) {
+            if (s <= gradeMaxSlot) targetSlots.push(s);
+          }
+        }
+
+        for (const targetSlot of targetSlots) {
+          if (placed) break;
+          const targetSk = slotKey(targetDay, targetSlot);
+
+          // Case D: target slot is occupied by a different subject for this class.
+          // Try to move that blocking class entry to an alternative slot, then place here.
+          if (classState.slots.has(targetSk)) {
+            const dBlockIdx = entries.findIndex(
+              (e) => e.class_id === cls.id && e.day === targetDay && e.slot === targetSlot,
+            );
+            if (dBlockIdx < 0) continue;
+            const dBlock = entries[dBlockIdx];
+            const dSubj = subjects.find((s) => s.id === dBlock.subject_id);
+            if (!dSubj) continue;
+            if (dSubj.coupled_class_ids.length > 0) continue;
+            if (dSubj.parallel_partner_subject_ids.length > 0) continue;
+            const dTeacher = teachers.find((t) => t.id === dBlock.teacher_id);
+            if (!dTeacher) continue;
+            const dTState = teacherStates.get(dTeacher.id)!;
+            const dAllowedDays = getSubjectAllowedDays(dSubj);
+            const dAllowedSlots = getSubjectAllowedSlots(dSubj, gradeMaxSlot);
+            // Require a teacher for U at targetSk (check before committing to the move)
+            const uTeacher = shuffle(teachers).find((t) => {
+              if (lockedTeacherId !== undefined && t.id !== lockedTeacherId) return false;
+              if (!canTeachSubject(t, subject.id)) return false;
+              const ts = teacherStates.get(t.id)!;
+              if (effectiveHours(t) <= ts.assignedHours) return false;
+              if (!isTeacherAvailableOnDay(t, targetDay)) return false;
+              if (!isTeacherAvailableAtSlot(t, targetSlot)) return false;
+              return !ts.busySlots.has(targetSk) || t.id === dTeacher.id;
+            }) ?? shuffle(teachers).find((t) => {
+              if (!canTeachSubject(t, subject.id)) return false;
+              const ts = teacherStates.get(t.id)!;
+              if (effectiveHours(t) <= ts.assignedHours) return false;
+              if (!isTeacherAvailableOnDay(t, targetDay)) return false;
+              if (!isTeacherAvailableAtSlot(t, targetSlot)) return false;
+              return !ts.busySlots.has(targetSk) || t.id === dTeacher.id;
+            });
+            if (!uTeacher) continue;
+            let dMoved = false;
+            outerD: for (const altDay of shuffle(dAllowedDays)) {
+              for (const altSlot of dAllowedSlots) {
+                if (altDay === targetDay && altSlot === targetSlot) continue;
+                const altSk = slotKey(altDay, altSlot);
+                if (classState.slots.has(altSk)) continue;
+                if (dTState.busySlots.has(altSk)) continue;
+                if (altSlot > gradeMaxSlot) continue;
+                if ((classState.slotsPerDay.get(altDay) ?? 0) >= gradeMaxSlot) continue;
+                if (!isTeacherAvailableOnDay(dTeacher, altDay)) continue;
+                if (!isTeacherAvailableAtSlot(dTeacher, altSlot)) continue;
+                if (dSubj.no_repeat_per_day) {
+                  const altSdKey = `${dSubj.id}-${altDay}`;
+                  const onAlt = classState.subjectDaySlots.get(altSdKey) ?? new Set();
+                  if (onAlt.size > 0 && altDay !== (dBlock.day as Weekday)) continue;
+                }
+                if (!repairMoveOk(classState, cls, dBlock.day as Weekday, dBlock.slot, altDay, altSlot)) continue;
+                // Also ensure uTeacher is free at targetSk after the move
+                if (uTeacher.id === dTeacher.id && altSk === targetSk) continue; // can't move to same spot we need
+                const uTs = teacherStates.get(uTeacher.id)!;
+                if (uTeacher.id !== dTeacher.id && uTs.busySlots.has(targetSk)) continue;
+                // Perform the move of the blocking class entry
+                const dFromSk = slotKey(dBlock.day as Weekday, dBlock.slot);
+                const dIsAg = isAgAssignment(dSubj, cls.grade_level);
+                dTState.busySlots.delete(dFromSk);
+                classState.slots.delete(dFromSk);
+                classState.slotsPerDay.set(dBlock.day as Weekday, Math.max(0, (classState.slotsPerDay.get(dBlock.day as Weekday) ?? 0) - 1));
+                if (!dIsAg) classState.nonAgSlotsPerDay.set(dBlock.day as Weekday, Math.max(0, (classState.nonAgSlotsPerDay.get(dBlock.day as Weekday) ?? 0) - 1));
+                const dOldSdk = `${dSubj.id}-${dBlock.day}`;
+                classState.subjectDaySlots.get(dOldSdk)?.delete(dBlock.slot);
+                subjectGlobalSlots.get(dSubj.id)?.delete(dFromSk);
+                entries[dBlockIdx] = { ...entries[dBlockIdx], day: altDay, slot: altSlot };
+                dTState.busySlots.add(altSk);
+                classState.slots.add(altSk);
+                classState.slotsPerDay.set(altDay, (classState.slotsPerDay.get(altDay) ?? 0) + 1);
+                if (!dIsAg) classState.nonAgSlotsPerDay.set(altDay, (classState.nonAgSlotsPerDay.get(altDay) ?? 0) + 1);
+                const dNewSdk = `${dSubj.id}-${altDay}`;
+                if (!classState.subjectDaySlots.has(dNewSdk)) classState.subjectDaySlots.set(dNewSdk, new Set());
+                classState.subjectDaySlots.get(dNewSdk)!.add(altSlot);
+                if (!subjectGlobalSlots.has(dSubj.id)) subjectGlobalSlots.set(dSubj.id, new Set());
+                subjectGlobalSlots.get(dSubj.id)!.add(altSk);
+                // Place the unplaced assignment at the now-free slot
+                repairRecord(cls, classState, subject, uTeacher, targetDay, targetSlot, true);
+                classSubjectTeacher.set(csKey, uTeacher.id);
+                assignment.remaining--;
+                placed = true;
+                anyProgress = true;
+                dMoved = true;
+                break outerD;
+              }
+            }
+            if (dMoved) break;
+            continue; // class slot still occupied, skip
+          }
+
+          // Find eligible teachers (respects existing lock, or any eligible if unlocked)
+          const repairEligible = shuffle(teachers).filter((t) => {
+            if (lockedTeacherId !== undefined && t.id !== lockedTeacherId) return false;
+            if (!canTeachSubject(t, subject.id)) return false;
+            if (!isTeacherAvailableOnDay(t, targetDay)) return false;
+            if (!isTeacherAvailableAtSlot(t, targetSlot)) return false;
+            return true;
+          });
+          // Expand to all eligible if locked teacher isn't available here
+          const allEligible = repairEligible.length > 0 ? repairEligible :
+            shuffle(teachers).filter((t) => {
+              if (!canTeachSubject(t, subject.id)) return false;
+              if (!isTeacherAvailableOnDay(t, targetDay)) return false;
+              if (!isTeacherAvailableAtSlot(t, targetSlot)) return false;
+              return true;
+            });
+
+          for (const repairTeacher of allEligible) {
+            const rtState = teacherStates.get(repairTeacher.id)!;
+
+            // Case A: teacher is free AND has capacity → direct placement
+            if (effectiveHours(repairTeacher) > rtState.assignedHours && !rtState.busySlots.has(targetSk)) {
+              repairRecord(cls, classState, subject, repairTeacher, targetDay, targetSlot, true);
+              classSubjectTeacher.set(csKey, repairTeacher.id);
+              assignment.remaining--;
+              placed = true;
+              anyProgress = true;
+              break;
+            }
+
+            // Case B: teacher is busy → try to move the blocking entry
+            if (rtState.busySlots.has(targetSk) && effectiveHours(repairTeacher) > rtState.assignedHours) {
+              const blockIdx = entries.findIndex(
+                (e) => e.teacher_id === repairTeacher.id && e.day === targetDay && e.slot === targetSlot,
+              );
+              if (blockIdx < 0) continue;
+              const block = entries[blockIdx];
+
+              const blockSubject = subjects.find((s) => s.id === block.subject_id);
+              const blockClass = classes.find((c) => c.id === block.class_id);
+              if (!blockSubject || !blockClass) continue;
+              // Don't disturb coupled or partner-group entries (complex cascading effects)
+              if (blockSubject.coupled_class_ids.length > 0) continue;
+              if (blockSubject.parallel_partner_subject_ids.length > 0) continue;
+
+              const blockClassState = classStates.get(blockClass.id)!;
+              const blockGradeMax = maxHoursPerDayByGrade.get(blockClass.grade_level) ?? 6;
+              const blockAllowedDays = getSubjectAllowedDays(blockSubject);
+              const blockAllowedSlots = getSubjectAllowedSlots(blockSubject, blockGradeMax);
+
+              let altFound = false;
+              outer: for (const altDay of shuffle(blockAllowedDays)) {
+                for (const altSlot of blockAllowedSlots) {
+                  if (altDay === targetDay && altSlot === targetSlot) continue;
+                  const altSk = slotKey(altDay, altSlot);
+                  if (blockClassState.slots.has(altSk)) continue;
+                  if (rtState.busySlots.has(altSk)) continue;
+                  if (altSlot > blockGradeMax) continue;
+                  if ((blockClassState.slotsPerDay.get(altDay) ?? 0) >= blockGradeMax) continue;
+                  if (!isTeacherAvailableOnDay(repairTeacher, altDay)) continue;
+                  if (!isTeacherAvailableAtSlot(repairTeacher, altSlot)) continue;
+                  if (blockSubject.no_repeat_per_day) {
+                    const altSdKey = `${blockSubject.id}-${altDay}`;
+                    const existingOnAlt = blockClassState.subjectDaySlots.get(altSdKey) ?? new Set();
+                    if (existingOnAlt.size > 0 && altDay !== (block.day as Weekday)) continue;
+                  }
+                  if (!repairMoveOk(blockClassState, blockClass, block.day as Weekday, block.slot, altDay, altSlot)) continue;
+
+                  // Perform the move
+                  const fromSk = slotKey(block.day as Weekday, block.slot);
+                  const blockAg = isAgAssignment(blockSubject, blockClass.grade_level);
+                  rtState.busySlots.delete(fromSk);
+                  blockClassState.slots.delete(fromSk);
+                  blockClassState.slotsPerDay.set(block.day as Weekday, Math.max(0, (blockClassState.slotsPerDay.get(block.day as Weekday) ?? 0) - 1));
+                  if (!blockAg) blockClassState.nonAgSlotsPerDay.set(block.day as Weekday, Math.max(0, (blockClassState.nonAgSlotsPerDay.get(block.day as Weekday) ?? 0) - 1));
+                  const oldSdKey = `${blockSubject.id}-${block.day}`;
+                  blockClassState.subjectDaySlots.get(oldSdKey)?.delete(block.slot);
+                  subjectGlobalSlots.get(blockSubject.id)?.delete(fromSk);
+
+                  entries[blockIdx] = { ...entries[blockIdx], day: altDay, slot: altSlot };
+
+                  rtState.busySlots.add(altSk);
+                  blockClassState.slots.add(altSk);
+                  blockClassState.slotsPerDay.set(altDay, (blockClassState.slotsPerDay.get(altDay) ?? 0) + 1);
+                  if (!blockAg) blockClassState.nonAgSlotsPerDay.set(altDay, (blockClassState.nonAgSlotsPerDay.get(altDay) ?? 0) + 1);
+                  const newSdKey = `${blockSubject.id}-${altDay}`;
+                  if (!blockClassState.subjectDaySlots.has(newSdKey)) blockClassState.subjectDaySlots.set(newSdKey, new Set());
+                  blockClassState.subjectDaySlots.get(newSdKey)!.add(altSlot);
+                  if (!subjectGlobalSlots.has(blockSubject.id)) subjectGlobalSlots.set(blockSubject.id, new Set());
+                  subjectGlobalSlots.get(blockSubject.id)!.add(altSk);
+
+                  altFound = true;
+                  break outer;
+                }
+              }
+              if (!altFound) continue;
+
+              // Place the unplaced assignment at the now-free slot
+              repairRecord(cls, classState, subject, repairTeacher, targetDay, targetSlot, true);
+              classSubjectTeacher.set(csKey, repairTeacher.id);
+              assignment.remaining--;
+              placed = true;
+              anyProgress = true;
+              break;
+            }
+
+            // Case C: teacher is free at this slot but has hit their hours_per_week cap.
+            // Try to free one capacity unit by reassigning one of their existing entries
+            // to a different eligible teacher — leaving room to place the unplaced assignment.
+            if (!rtState.busySlots.has(targetSk) && effectiveHours(repairTeacher) <= rtState.assignedHours) {
+              // Find an entry taught by repairTeacher that a different teacher could cover.
+              let swapDone = false;
+              for (let eIdx = 0; eIdx < entries.length; eIdx++) {
+                if (placed) break;
+                const e = entries[eIdx];
+                if (e.teacher_id !== repairTeacher.id) continue;
+                const eSubj = subjects.find((s) => s.id === e.subject_id);
+                const eCls  = classes.find((c) => c.id === e.class_id);
+                if (!eSubj || !eCls) continue;
+                if (eSubj.coupled_class_ids.length > 0) continue;
+                if (eSubj.parallel_partner_subject_ids.length > 0) continue;
+                const eSk = slotKey(e.day as Weekday, e.slot);
+                // Find an alternative teacher who can take over this entry
+                const altT = shuffle(teachers).find((t2) => {
+                  if (t2.id === repairTeacher.id) return false;
+                  if (!isSubjectAllowedForClass(t2, e.subject_id, e.class_id)) return false;
+                  const t2s = teacherStates.get(t2.id)!;
+                  if (effectiveHours(t2) <= t2s.assignedHours) return false;
+                  if (!isTeacherAvailableOnDay(t2, e.day as Weekday)) return false;
+                  if (!isTeacherAvailableAtSlot(t2, e.slot)) return false;
+                  return !t2s.busySlots.has(eSk);
+                });
+                if (!altT) continue;
+                // Perform the teacher swap on this entry
+                const altTs = teacherStates.get(altT.id)!;
+                const eGc = eSubj.grade_configs.find((g) => g.grade_level === eCls.grade_level);
+                const eCat = eGc?.category_override ?? eSubj.category;
+                const eIsAg = isAgAssignment(eSubj, eCls.grade_level);
+                // Deduct from repairTeacher
+                rtState.assignedHours--;
+                if (eCat === "main") rtState.mainHours--;
+                else if (eIsAg) rtState.agHours--;
+                else rtState.minorHours--;
+                rtState.busySlots.delete(eSk);
+                // Add to altT
+                altTs.assignedHours++;
+                if (eCat === "main") altTs.mainHours++;
+                else if (eIsAg) altTs.agHours++;
+                else altTs.minorHours++;
+                altTs.busySlots.add(eSk);
+                // Update entry and lock
+                entries[eIdx] = {
+                  ...entries[eIdx],
+                  teacher_id: altT.id,
+                  teacher_abbreviation: altT.abbreviation,
+                  teacher_name: `${altT.first_name} ${altT.last_name}`,
+                };
+                const eCsKey = `${e.class_id}-${e.subject_id}`;
+                if (classSubjectTeacher.get(eCsKey) === repairTeacher.id) {
+                  classSubjectTeacher.set(eCsKey, altT.id);
+                }
+                swapDone = true;
+                // Now repairTeacher has capacity — place the unplaced assignment
+                repairRecord(cls, classState, subject, repairTeacher, targetDay, targetSlot, true);
+                classSubjectTeacher.set(csKey, repairTeacher.id);
+                assignment.remaining--;
+                placed = true;
+                anyProgress = true;
+                break;
+              }
+              if (swapDone) break;
+            }
+          }
+        }
+      }
+    }
+
+    if (!anyProgress) break;
+  }
+
+  // ── Backtracking pass ─────────────────────────────────────────────────────────
+  // For each still-unplaced assignment, attempt depth-2 conflict resolution:
+  // move up to two blocking entries to free a (teacher, day, slot) for the stuck assignment.
+  // Only simple (non-coupled, non-partner) entries are moved to avoid cascade side-effects.
+  // Returns an undo function on success so the caller can reverse if a deeper step fails.
+  type UndoFn = () => void;
+
+  const tryMoveEntryBt = (eIdx: number, avoidSk?: string): UndoFn | null => {
+    const e = entries[eIdx];
+    const eSubj = subjects.find((s) => s.id === e.subject_id);
+    const eCls  = classes.find((c) => c.id === e.class_id);
+    if (!eSubj || !eCls) return null;
+    if (eSubj.coupled_class_ids.length > 0) return null;
+    if (eSubj.parallel_partner_subject_ids.length > 0) return null;
+    const eT = teachers.find((t) => t.id === e.teacher_id);
+    if (!eT) return null;
+    const eTs   = teacherStates.get(eT.id)!;
+    const eCs   = classStates.get(eCls.id)!;
+    const eGMax = maxHoursPerDayByGrade.get(eCls.grade_level) ?? 6;
+    const eAD   = getSubjectAllowedDays(eSubj);
+    const eAS   = getSubjectAllowedSlots(eSubj, eGMax);
+    const fromSk = slotKey(e.day as Weekday, e.slot);
+
+    for (const altDay of shuffle(eAD)) {
+      for (const altSlot of eAS) {
+        const altSk = slotKey(altDay, altSlot);
+        if (altSk === fromSk) continue;
+        if (avoidSk && altSk === avoidSk) continue;
+        if (eCs.slots.has(altSk)) continue;
+        if (eTs.busySlots.has(altSk)) continue;
+        if (altSlot > eGMax) continue;
+        if ((eCs.slotsPerDay.get(altDay) ?? 0) >= eGMax) continue;
+        if (!isTeacherAvailableOnDay(eT, altDay)) continue;
+        if (!isTeacherAvailableAtSlot(eT, altSlot)) continue;
+        if (eSubj.no_repeat_per_day) {
+          const altSdk = `${eSubj.id}-${altDay}`;
+          const onAlt = eCs.subjectDaySlots.get(altSdk) ?? new Set();
+          if (onAlt.size > 0 && altDay !== (e.day as Weekday)) continue;
+        }
+        if (!repairMoveOk(eCs, eCls, e.day as Weekday, e.slot, altDay, altSlot)) continue;
+
+        // Perform move
+        const eIsAg = isAgAssignment(eSubj, eCls.grade_level);
+        eTs.busySlots.delete(fromSk);
+        eCs.slots.delete(fromSk);
+        eCs.slotsPerDay.set(e.day as Weekday, Math.max(0, (eCs.slotsPerDay.get(e.day as Weekday) ?? 0) - 1));
+        if (!eIsAg) eCs.nonAgSlotsPerDay.set(e.day as Weekday, Math.max(0, (eCs.nonAgSlotsPerDay.get(e.day as Weekday) ?? 0) - 1));
+        eCs.subjectDaySlots.get(`${eSubj.id}-${e.day}`)?.delete(e.slot);
+        subjectGlobalSlots.get(eSubj.id)?.delete(fromSk);
+        entries[eIdx] = { ...entries[eIdx], day: altDay, slot: altSlot };
+        eTs.busySlots.add(altSk);
+        eCs.slots.add(altSk);
+        eCs.slotsPerDay.set(altDay, (eCs.slotsPerDay.get(altDay) ?? 0) + 1);
+        if (!eIsAg) eCs.nonAgSlotsPerDay.set(altDay, (eCs.nonAgSlotsPerDay.get(altDay) ?? 0) + 1);
+        const newSdk = `${eSubj.id}-${altDay}`;
+        if (!eCs.subjectDaySlots.has(newSdk)) eCs.subjectDaySlots.set(newSdk, new Set());
+        eCs.subjectDaySlots.get(newSdk)!.add(altSlot);
+        if (!subjectGlobalSlots.has(eSubj.id)) subjectGlobalSlots.set(eSubj.id, new Set());
+        subjectGlobalSlots.get(eSubj.id)!.add(altSk);
+
+        // Return undo function
+        return () => {
+          eTs.busySlots.delete(altSk);
+          eCs.slots.delete(altSk);
+          eCs.slotsPerDay.set(altDay, Math.max(0, (eCs.slotsPerDay.get(altDay) ?? 0) - 1));
+          if (!eIsAg) eCs.nonAgSlotsPerDay.set(altDay, Math.max(0, (eCs.nonAgSlotsPerDay.get(altDay) ?? 0) - 1));
+          eCs.subjectDaySlots.get(newSdk)?.delete(altSlot);
+          subjectGlobalSlots.get(eSubj.id)?.delete(altSk);
+          entries[eIdx] = { ...entries[eIdx], day: e.day as Weekday, slot: e.slot };
+          eTs.busySlots.add(fromSk);
+          eCs.slots.add(fromSk);
+          eCs.slotsPerDay.set(e.day as Weekday, (eCs.slotsPerDay.get(e.day as Weekday) ?? 0) + 1);
+          if (!eIsAg) eCs.nonAgSlotsPerDay.set(e.day as Weekday, (eCs.nonAgSlotsPerDay.get(e.day as Weekday) ?? 0) + 1);
+          const oldSdk2 = `${eSubj.id}-${e.day}`;
+          if (!eCs.subjectDaySlots.has(oldSdk2)) eCs.subjectDaySlots.set(oldSdk2, new Set());
+          eCs.subjectDaySlots.get(oldSdk2)!.add(e.slot);
+          if (!subjectGlobalSlots.has(eSubj.id)) subjectGlobalSlots.set(eSubj.id, new Set());
+          subjectGlobalSlots.get(eSubj.id)!.add(fromSk);
+        };
+      }
+    }
+    return null;
+  };
+
+  for (const assignment of shuffle(assignments.slice())) {
+    if (assignment.remaining <= 0) continue;
+    if (coupledFollowers.has(`${assignment.cls.id}-${assignment.subject.id}`)) continue;
+
+    const { cls: btCls, subject: btSubj } = assignment;
+    const btClassState = classStates.get(btCls.id)!;
+    const btGradeMax = maxHoursPerDayByGrade.get(btCls.grade_level) ?? 6;
+    const btGradeMin = minHoursPerDayByGrade.get(btCls.grade_level) ?? 4;
+    const btAllowedDays = getSubjectAllowedDays(btSubj);
+    const btAllowedSlots = getSubjectAllowedSlots(btSubj, btGradeMax);
+    const btCsKey = `${btCls.id}-${btSubj.id}`;
+    const btLockedId = classSubjectTeacher.get(btCsKey);
+    const btIsAg = isAgAssignment(btSubj, btCls.grade_level);
+    const btIsBoundary = !btIsAg && btSubj.must_be_boundary;
+
+    let btPlaced = false;
+
+    for (const btDay of shuffle(btAllowedDays)) {
+      if (btPlaced) break;
+      if (btIsAg) {
+        const nonAg = btClassState.nonAgSlotsPerDay.get(btDay) ?? 0;
+        if (nonAg < btGradeMin) continue;
+      }
+      if ((btClassState.slotsPerDay.get(btDay) ?? 0) >= btGradeMax) continue;
+
+      // Compute candidate slots (mirrors repair logic)
+      const btSlots: number[] = [];
+      if (btIsBoundary || btIsAg) {
+        const dayNums: number[] = [];
+        for (const key of btClassState.slots) {
+          const [d, s] = key.split("-").map(Number);
+          if (d === btDay) dayNums.push(s);
+        }
+        if (dayNums.length === 0 && !btIsAg && btAllowedSlots.includes(1)) btSlots.push(1);
+        else {
+          const minS = Math.min(...dayNums);
+          const maxS = Math.max(...dayNums);
+          if (minS - 1 >= 1 && btAllowedSlots.includes(minS - 1)) btSlots.push(minS - 1);
+          if (maxS + 1 <= btGradeMax && btAllowedSlots.includes(maxS + 1)) btSlots.push(maxS + 1);
+        }
+      } else {
+        for (const s of btAllowedSlots) {
+          if (s <= btGradeMax) btSlots.push(s);
+        }
+      }
+
+      for (const btSlot of shuffle(btSlots)) {
+        if (btPlaced) break;
+        const btSk = slotKey(btDay, btSlot);
+
+        // Must have a free class slot
+        if (btClassState.slots.has(btSk)) continue;
+
+        // Find an eligible teacher that is free at this slot
+        const eligForBt = shuffle(teachers).filter((t) => {
+          if (btLockedId !== undefined && t.id !== btLockedId) return false;
+          if (!canTeachSubject(t, btSubj.id)) return false;
+          const ts = teacherStates.get(t.id)!;
+          if (effectiveHours(t) <= ts.assignedHours) return false;
+          if (!isTeacherAvailableOnDay(t, btDay)) return false;
+          if (!isTeacherAvailableAtSlot(t, btSlot)) return false;
+          return true;
+        });
+
+        for (const btT of eligForBt) {
+          if (btPlaced) break;
+          const btTs = teacherStates.get(btT.id)!;
+          if (!btTs.busySlots.has(btSk)) {
+            // Depth-0: teacher free → place directly (should have been caught by repair)
+            repairRecord(btCls, btClassState, btSubj, btT, btDay, btSlot, true);
+            classSubjectTeacher.set(btCsKey, btT.id);
+            assignment.remaining--;
+            btPlaced = true;
+            break;
+          }
+          // Depth-1: teacher busy → find their blocking entry and move it
+          const d1Idx = entries.findIndex((e) => e.teacher_id === btT.id && e.day === btDay && e.slot === btSlot);
+          if (d1Idx < 0) continue;
+          const d1Undo = tryMoveEntryBt(d1Idx, btSk);
+          if (d1Undo) {
+            repairRecord(btCls, btClassState, btSubj, btT, btDay, btSlot, true);
+            classSubjectTeacher.set(btCsKey, btT.id);
+            assignment.remaining--;
+            btPlaced = true;
+            break;
+          }
+          // Depth-2: blocking entry can't move directly.
+          // Find what's blocking IT and move that first, then retry.
+          const d1Entry = entries[d1Idx];
+          const d1Subj = subjects.find((s) => s.id === d1Entry.subject_id);
+          if (!d1Subj) continue;
+          if (d1Subj.coupled_class_ids.length > 0) continue;
+          if (d1Subj.parallel_partner_subject_ids.length > 0) continue;
+          const d1T = teachers.find((t) => t.id === d1Entry.teacher_id);
+          if (!d1T) continue;
+          const d1Ts = teacherStates.get(d1T.id)!;
+          const d1AD = getSubjectAllowedDays(d1Subj);
+          const d1GMax = maxHoursPerDayByGrade.get(classes.find((c) => c.id === d1Entry.class_id)?.grade_level ?? 1) ?? 6;
+          const d1AS = getSubjectAllowedSlots(d1Subj, d1GMax);
+
+          for (const d2Day of shuffle(d1AD)) {
+            if (btPlaced) break;
+            for (const d2Slot of d1AS) {
+              if (btPlaced) break;
+              const d2Sk = slotKey(d2Day, d2Slot);
+              if (d2Sk === slotKey(d1Entry.day as Weekday, d1Entry.slot)) continue;
+              if (d2Sk === btSk) continue;
+              if (d1Ts.busySlots.has(d2Sk)) {
+                // d1T is also busy at this alternative — find that blocker and move it (depth-2 move)
+                const d2Idx = entries.findIndex((e) => e.teacher_id === d1T.id && e.day === d2Day && e.slot === d2Slot);
+                if (d2Idx < 0) continue;
+                const d2Undo = tryMoveEntryBt(d2Idx, btSk);
+                if (!d2Undo) continue;
+                // Now d1T is free at d2Sk — try to move d1Entry there
+                const d1UndoNow = tryMoveEntryBt(d1Idx, btSk);
+                if (d1UndoNow) {
+                  repairRecord(btCls, btClassState, btSubj, btT, btDay, btSlot, true);
+                  classSubjectTeacher.set(btCsKey, btT.id);
+                  assignment.remaining--;
+                  btPlaced = true;
+                  break;
+                } else {
+                  d2Undo(); // undo depth-2 move
+                }
+              }
+            }
+          }
+        }
       }
     }
   }

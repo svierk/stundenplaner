@@ -148,6 +148,9 @@ export function TimetablePage() {
     }
 
     setGenerating(true);
+    // Yield to the renderer so the spinner/loading state appears before the
+    // synchronous scheduler blocks the main thread.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
     try {
       const result = generateTimetable(teachers, classes, subjects, gradeLevelConfigs);
 
@@ -546,12 +549,18 @@ export function TimetablePage() {
 
       {!activeTimetable && !loading && (
         <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground border rounded-lg">
-          <CalendarDays className="h-8 w-8 opacity-30" />
-          <p className="text-sm">Kein Stundenplan ausgewählt</p>
-          <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating}>
-            <Play className="h-4 w-4" />
-            Jetzt generieren
-          </Button>
+          {generating ? (
+            <>
+              <Loader2 className="h-8 w-8 opacity-50 animate-spin" />
+              <p className="text-sm">Stundenplan wird generiert…</p>
+            </>
+          ) : (
+            <>
+              <CalendarDays className="h-8 w-8 opacity-30" />
+              <p className="text-sm">Kein Stundenplan ausgewählt</p>
+              <p className="text-xs opacity-60">Nutze den Button oben rechts, um einen neuen Stundenplan zu generieren.</p>
+            </>
+          )}
         </div>
       )}
     </div>
