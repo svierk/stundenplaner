@@ -9,6 +9,7 @@ interface TimetableStore {
   fetch: () => Promise<void>;
   save: (name: string, schoolYear: string, entries: Omit<TimetableEntry, "id" | "timetable_id">[], warnings?: string[]) => Promise<number>;
   remove: (id: number) => Promise<void>;
+  removeMany: (ids: number[]) => Promise<void>;
   setActive: (timetable: Timetable | null) => void;
   swapEntries: (idA: number, idB: number) => Promise<void>;
 }
@@ -38,6 +39,13 @@ export const useTimetableStore = create<TimetableStore>((set, get) => ({
     await db.deleteTimetable(id);
     const { activeTimetable } = get();
     if (activeTimetable?.id === id) set({ activeTimetable: null });
+    await get().fetch();
+  },
+
+  removeMany: async (ids) => {
+    await db.deleteTimetables(ids);
+    const { activeTimetable } = get();
+    if (activeTimetable && ids.includes(activeTimetable.id)) set({ activeTimetable: null });
     await get().fetch();
   },
 

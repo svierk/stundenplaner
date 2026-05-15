@@ -588,6 +588,13 @@ export async function deleteTimetable(id: number): Promise<void> {
   await db.execute("DELETE FROM timetables WHERE id = ?", [id]);
 }
 
+export async function deleteTimetables(ids: number[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  const placeholders = ids.map(() => "?").join(", ");
+  await db.execute(`DELETE FROM timetables WHERE id IN (${placeholders})`, ids);
+}
+
 export async function swapTimetableEntries(idA: number, idB: number): Promise<void> {
   const db = await getDb();
   const rows = await db.select<{ id: number; day: number; slot: number }[]>(

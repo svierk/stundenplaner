@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { CalendarDays, Play, Download, Trash2, AlertTriangle, ChevronDown, Loader2 } from "lucide-react";
+import { CalendarDays, Play, Download, Trash2, AlertTriangle, ChevronDown, Loader2, Settings2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
@@ -112,11 +120,14 @@ export function TimetablePage() {
   const { subjects, fetch: fetchSubjects } = useSubjectStore();
   const { teachers, fetch: fetchTeachers } = useTeacherStore();
   const { classes, fetch: fetchClasses } = useClassStore();
-  const { timetables, activeTimetable, loading, fetch: fetchTimetables, save: saveTimetable, remove, setActive, swapEntries } = useTimetableStore();
+  const { timetables, activeTimetable, loading, fetch: fetchTimetables, save: saveTimetable, remove, removeMany, setActive, swapEntries } = useTimetableStore();
   const { configs: gradeLevelConfigs, fetch: fetchGradeLevelConfigs } = useGradeLevelStore();
   const { toast } = useToast();
 
   const [generating, setGenerating] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [deleting, setDeleting] = useState(false);
   const [warningsOpen, setWarningsOpen] = useState(false);
   const [schoolYear, setSchoolYear] = useState(`${new Date().getFullYear()}/${new Date().getFullYear() + 1}`);
   const [viewMode, setViewMode] = useState<"classes" | "teachers">("classes");
@@ -184,6 +195,29 @@ export function TimetablePage() {
     toast({ title: "Stundenplan gelöscht" });
   };
 
+  const handleDeleteSelected = async () => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setDeleting(true);
+    try {
+      await removeMany(ids);
+      setSelected(new Set());
+      setManageOpen(false);
+      toast({ title: `${ids.length} ${ids.length > 1 ? "Stundenpläne" : "Stundenplan"} gelöscht` });
+    } catch (err) {
+      toast({ variant: "destructive", title: "Fehler beim Löschen", description: String(err) });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const toggleSelect = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
   const handleExportExcel = async () => {
     if (!activeTimetable) return;
     const destPath = await save({
@@ -248,30 +282,95 @@ export function TimetablePage() {
         </div>
         <div className="space-y-1.5">
           <Label>Vorhandene Stundenpläne</Label>
-          <Select
-            value={activeTimetable?.id.toString() ?? "none"}
-            onValueChange={(v) => {
-              if (v === "none") {
-                setActive(null);
-              } else {
-                const found = timetables.find((t) => String(t.id) === v);
-                setActive(found ?? null);
-              }
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Stundenplan wählen..." />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">– Keinen auswählen –</SelectItem>
-              {timetables.map((t) => (
-                <SelectItem key={t.id} value={t.id.toString()}>
-                  {t.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex gap-2">
+            <Select
+              value={activeTimetable?.id.toString() ?? "none"}
+              onValueChange={(v) => {
+                if (v === "none") {
+                  setActive(null);
+                } else {
+                  const found = timetables.find((t) => String(t.id) === v);
+                  setActive(found ?? null);
+                }
+              }}
+            >
+              <SelectTrigger className="flex-1">
+                <SelectValue placeholder="Stundenplan wählen..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">– Keinen auswählen –</SelectItem>
+                {timetables.map((t) => (
+                  <SelectItem key={t.id} value={t.id.toString()}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {timetables.length > 0 && (
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => { setSelected(new Set()); setManageOpen(true); }}
+                title="Stundenpläne verwalten"
+              >
+                <Settings2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
         </div>
+
+        <Dialog open={manageOpen} onOpenChange={(o) => { if (!o) { setManageOpen(false); setSelected(new Set()); } }}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Stundenpläne verwalten</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+              {timetables.map((t) => (
+                <label
+                  key={t.id}
+                  className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 cursor-pointer select-none"
+                >
+                  <Checkbox
+                    checked={selected.has(t.id)}
+                    onCheckedChange={() => toggleSelect(t.id)}
+                  />
+                  <span className="text-sm flex-1 min-w-0 truncate">{t.name}</span>
+                  {activeTimetable?.id === t.id && (
+                    <span className="text-xs text-primary font-medium shrink-0">Aktiv</span>
+                  )}
+                </label>
+              ))}
+            </div>
+            <div className="flex items-center justify-between pt-1">
+              <button
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() =>
+                  setSelected(
+                    selected.size === timetables.length
+                      ? new Set()
+                      : new Set(timetables.map((t) => t.id)),
+                  )
+                }
+              >
+                {selected.size === timetables.length ? "Auswahl aufheben" : "Alle auswählen"}
+              </button>
+              <span className="text-xs text-muted-foreground">{selected.size} ausgewählt</span>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setManageOpen(false); setSelected(new Set()); }}>
+                Abbrechen
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={selected.size === 0 || deleting}
+                onClick={handleDeleteSelected}
+              >
+                <Trash2 className="h-4 w-4" />
+                {deleting ? "Löschen..." : `${selected.size > 0 ? `${selected.size} ` : ""}Löschen`}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {(activeTimetable?.warnings?.length ?? 0) > 0 && (
