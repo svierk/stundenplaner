@@ -30,6 +30,7 @@ interface ClassState {
   slotsPerDay: Map<Weekday, number>;        // total slots per day (non-AG + AG) — used for max constraint
   nonAgSlotsPerDay: Map<Weekday, number>;   // non-AG slots per day — used for min constraint
   slots: Set<string>;
+  nonAgSlots: Set<string>;                  // slot keys of non-AG lessons — for gap-free anchor calculation
   subjectDaySlots: Map<string, Set<number>>;
 }
 
@@ -241,6 +242,7 @@ function _runScheduler(
         slotsPerDay: new Map(),
         nonAgSlotsPerDay: new Map(),
         slots: new Set(),
+        nonAgSlots: new Set(),
         subjectDaySlots: new Map(),
       },
     ]),
@@ -285,11 +287,26 @@ function _runScheduler(
   assignments.sort((a, b) => {
     const isAgA = isAgAssignment(a.subject, a.gradeLevel);
     const isAgB = isAgAssignment(b.subject, b.gradeLevel);
+    // Fixed AGs have both allowed_days AND allowed_slots fully specified — zero placement
+    // variability. They must be placed before any other subject so the school day can fill
+    // in around them (e.g. FrAG at Friday slot 6 → non-AGs fill slots 1–5 afterwards).
+    const isFixedAgA = isAgA && a.subject.allowed_slots.length > 0 && a.subject.allowed_days.length > 0;
+    const isFixedAgB = isAgB && b.subject.allowed_slots.length > 0 && b.subject.allowed_days.length > 0;
+    if (isFixedAgA !== isFixedAgB) return isFixedAgA ? -1 : 1;
+    // Regular AGs sort last (need non-AG minimum already on the day)
     if (isAgA !== isAgB) return isAgA ? 1 : -1;
-    // Boundary subjects (Randstunden) sort after regular subjects but before AGs
-    const isBoundA = !isAgA && a.subject.must_be_boundary;
-    const isBoundB = !isAgB && b.subject.must_be_boundary;
-    if (isBoundA !== isBoundB) return isBoundA ? 1 : -1;
+    // Uncoupled boundary subjects (Randstunden) sort after regular subjects but before AGs.
+    // Coupled boundary subjects (e.g. EngProfi) are NOT moved to the back — they need to run
+    // early so regular subjects can't occupy the few available boundary slots first.
+    const isUncoupledBoundA = !isAgA && a.subject.must_be_boundary && a.subject.coupled_class_ids.length === 0;
+    const isUncoupledBoundB = !isAgB && b.subject.must_be_boundary && b.subject.coupled_class_ids.length === 0;
+    if (isUncoupledBoundA !== isUncoupledBoundB) return isUncoupledBoundA ? 1 : -1;
+    // Fixed-slot non-AGs (allowed_days AND allowed_slots both specified): exactly one valid
+    // position per class, like Kath. Religion on Mon-1. Sort before everything else so other
+    // subjects can't claim their single valid slot first. Fixed AGs already handled above.
+    const isFixedSlotA = !isAgA && a.subject.allowed_slots.length > 0 && a.subject.allowed_days.length > 0;
+    const isFixedSlotB = !isAgB && b.subject.allowed_slots.length > 0 && b.subject.allowed_days.length > 0;
+    if (isFixedSlotA !== isFixedSlotB) return isFixedSlotA ? -1 : 1;
     // Ultra-constrained: coupled group WITH slot restriction — must be placed absolutely first
     // so that no other subject (even a designated one) can claim their required slots.
     const isUCA = a.subject.coupled_class_ids.length > 0 && a.subject.allowed_slots.length > 0;
@@ -301,6 +318,11 @@ function _runScheduler(
     const isCPA = a.subject.coupled_class_ids.length > 0 && a.subject.parallel_partner_subject_ids.length > 0;
     const isCPB = b.subject.coupled_class_ids.length > 0 && b.subject.parallel_partner_subject_ids.length > 0;
     if (isCPA !== isCPB) return isCPA ? -1 : 1;
+    // Coupled boundary: coupled + must_be_boundary (e.g. EngProfi). Must run before regular
+    // uncoupled subjects so their teacher's boundary slots are not claimed first.
+    const isCoupledBoundA = !isAgA && a.subject.must_be_boundary && a.subject.coupled_class_ids.length > 0;
+    const isCoupledBoundB = !isAgB && b.subject.must_be_boundary && b.subject.coupled_class_ids.length > 0;
+    if (isCoupledBoundA !== isCoupledBoundB) return isCoupledBoundA ? -1 : 1;
     const hasDesA = teachers.some((t) => isDesignatedForClass(t, a.subject.id, a.cls.id));
     const hasDesB = teachers.some((t) => isDesignatedForClass(t, b.subject.id, b.cls.id));
     if (hasDesA !== hasDesB) return hasDesA ? -1 : 1;
@@ -404,6 +426,21 @@ function _runScheduler(
     const isAg = isAgAssignment(subject, cls.grade_level);
     const isBoundary = !isAg && subject.must_be_boundary;
 
+    // Defer uncoupled boundary subjects until all regular (non-boundary, non-AG) subjects
+    // for this class are fully placed. Without this, a boundary subject placed at e.g.
+    // slot 4 can become interior when a later round adds slot 5 for a regular subject.
+    if (isBoundary && subject.coupled_class_ids.length === 0) {
+      const anyRegularRemaining = assignments.some(
+        (a) =>
+          a.cls.id === cls.id &&
+          a.remaining > 0 &&
+          !isAgAssignment(a.subject, a.gradeLevel) &&
+          !a.subject.must_be_boundary &&
+          !coupledFollowers.has(`${a.cls.id}-${a.subject.id}`),
+      );
+      if (anyRegularRemaining) continue;
+    }
+
     {
       // Read the lock fresh every round so it takes effect from the 2nd hour onward
       const lockedTeacherId = classSubjectTeacher.get(csKey);
@@ -422,38 +459,65 @@ function _runScheduler(
       const candidateSlots: SlotKey[] = [];
 
       if (isAg) {
-        // AG subjects must sit at the boundary of the day (before the first lesson or after
-        // the last lesson). A day is only eligible once it already has >= gradeMinSlot
-        // non-AG lessons so the minimum is met regardless of the AG.
-        for (const day of shuffle(allowedDays)) {
-          const nonAgCount = classState.nonAgSlotsPerDay.get(day) ?? 0;
-          const totalCount = classState.slotsPerDay.get(day) ?? 0;
-          if (nonAgCount < gradeMinSlot) continue;  // min must be met by non-AG alone
-          if (totalCount >= gradeMaxSlot) continue;  // AG counts toward max
+        const globalSlots = subjectGlobalSlots.get(subject.id);
+        const excluded = mutualExclusions.get(subject.id);
+        const isBlocked = (sk: string) =>
+          (subject.no_parallel_classes && !!globalSlots?.has(sk)) ||
+          !!(excluded && [...excluded].some((id) => subjectGlobalSlots.get(id)?.has(sk)));
 
-          const daySlotNums: number[] = [];
-          for (const key of classState.slots) {
-            const [d, s] = key.split("-").map(Number);
-            if (d === day) daySlotNums.push(s);
+        if (subject.allowed_slots.length > 0 && subject.allowed_days.length > 0) {
+          // Fixed AG (exact day + slot specified): place directly, no boundary or non-AG minimum
+          // check needed. Sorted first so the school day fills in around this lesson.
+          for (const day of shuffle(allowedDays)) {
+            const totalCount = classState.slotsPerDay.get(day) ?? 0;
+            if (totalCount >= gradeMaxSlot) continue;
+            for (const slot of allowedSlots) {
+              const sk = slotKey(day, slot);
+              if (classState.slots.has(sk)) continue;
+              if (isBlocked(sk)) continue;
+              candidateSlots.push({ day, slot });
+            }
           }
-          if (daySlotNums.length === 0) continue;
+        } else {
+          // Regular AG: must sit at the boundary of the day (before the first lesson or after
+          // the last lesson). A day is only eligible once it already has >= gradeMinSlot
+          // non-AG lessons so the minimum is met regardless of the AG.
+          // For coupled AGs, ALL classes in the group must satisfy the non-AG minimum.
+          const agFollowerClasses = subject.coupled_class_ids
+            .filter((id) => id !== cls.id && !subject.excluded_class_ids.includes(id))
+            .map((id) => ({ cls: classes.find((c) => c.id === id)!, state: classStates.get(id)! }))
+            .filter((f) => f.cls && f.state);
+          for (const day of shuffle(allowedDays)) {
+            const nonAgCount = classState.nonAgSlotsPerDay.get(day) ?? 0;
+            const totalCount = classState.slotsPerDay.get(day) ?? 0;
+            if (nonAgCount < gradeMinSlot) continue;  // min must be met by non-AG alone
+            if (totalCount >= gradeMaxSlot) continue;  // AG counts toward max
+            // All follower classes must also have enough non-AG lessons on this day
+            if (agFollowerClasses.some((f) => {
+              const fGradeMin = minHoursPerDayByGrade.get(f.cls.grade_level) ?? gradeMinSlot;
+              const fNonAg = f.state.nonAgSlotsPerDay.get(day) ?? 0;
+              return fNonAg < fGradeMin;
+            })) continue;
 
-          const minSl = Math.min(...daySlotNums);
-          const maxSl = Math.max(...daySlotNums);
-          const globalSlots = subjectGlobalSlots.get(subject.id);
-          const excluded = mutualExclusions.get(subject.id);
+            const daySlotNums: number[] = [];
+            for (const key of classState.slots) {
+              const [d, s] = key.split("-").map(Number);
+              if (d === day) daySlotNums.push(s);
+            }
+            if (daySlotNums.length === 0) continue;
 
-          for (const slot of [minSl - 1, maxSl + 1]) {
-            if (slot < 1 || slot > gradeMaxSlot) continue;
-            // Respect explicit allowed_slots restriction if configured
-            if (subject.allowed_slots.length > 0 && !subject.allowed_slots.includes(slot)) continue;
-            const sk = slotKey(day, slot);
-            if (classState.slots.has(sk)) continue;
-            const blocked =
-              (subject.no_parallel_classes && globalSlots?.has(sk)) ||
-              !!(excluded && [...excluded].some((id) => subjectGlobalSlots.get(id)?.has(sk)));
-            if (blocked) continue;
-            candidateSlots.push({ day, slot });
+            const minSl = Math.min(...daySlotNums);
+            const maxSl = Math.max(...daySlotNums);
+
+            for (const slot of [minSl - 1, maxSl + 1]) {
+              if (slot < 1 || slot > gradeMaxSlot) continue;
+              // Respect explicit allowed_slots restriction if configured
+              if (subject.allowed_slots.length > 0 && !subject.allowed_slots.includes(slot)) continue;
+              const sk = slotKey(day, slot);
+              if (classState.slots.has(sk)) continue;
+              if (isBlocked(sk)) continue;
+              candidateSlots.push({ day, slot });
+            }
           }
         }
       } else if (isBoundary) {
@@ -553,7 +617,9 @@ function _runScheduler(
             // 3. Otherwise apply the stagger formula.
             let effectiveStart = startSlotForDay;
             let dayMinPlaced = Infinity;
-            for (const key of classState.slots) {
+            // Anchor only on non-AG slots so a fixed AG at e.g. slot 6 (placed first) doesn't
+            // pull effectiveStart to 6 and block the rest of the day from being filled.
+            for (const key of classState.nonAgSlots) {
               const [d, s] = key.split("-").map(Number);
               if (d === (day as number)) dayMinPlaced = Math.min(dayMinPlaced, s);
             }
@@ -562,7 +628,10 @@ function _runScheduler(
             } else if (subject.allowed_slots.length > 0 && !subject.allowed_slots.includes(startSlotForDay)) {
               effectiveStart = allowedSlots[0] ?? startSlotForDay;
             }
-            const nextSlot = effectiveStart + totalDayCount;
+            // Use non-AG count as the offset so fixed AGs (placed first at boundary slots)
+            // don't shift effectiveStart and leave gaps in the consecutive non-AG block.
+            const nonAgDayCount = classState.nonAgSlotsPerDay.get(day) ?? 0;
+            const nextSlot = effectiveStart + nonAgDayCount;
             const sk = slotKey(day, nextSlot);
             if (
               nextSlot <= gradeMaxSlot &&
@@ -720,26 +789,69 @@ function _runScheduler(
 
         if (!teacher) continue;
 
-        // Re-resolve partner teachers for all partner subjects, leader + follower classes.
-        // Rule: all-or-nothing PER CLASS — each class independently gets either ALL partners
-        // co-placed or NONE. usedPartnerIds is committed only when every partner for a class
-        // is found (tentative reservation prevents double-booking across classes).
-        // Non-coupled primaries: hard constraint — skip slot if the leader class can't get all partners.
-        // Coupled primaries: primary is always placed; per-class partner co-placement is best-effort.
+        // Re-resolve partner teachers for all partner subjects.
+        // Partners are split into two categories:
+        //   • Coupled partners (have coupled_class_ids): resolved once at the GROUP level with a
+        //     single teacher covering all of the partner's coupled classes simultaneously.
+        //     Only attempted when the current subject is also coupled.
+        //   • Uncoupled partners: resolved per-class (leader gets its own teacher, each follower
+        //     gets its own teacher). All-or-nothing per class.
+        // Non-coupled primaries: hard constraint — skip slot if any uncoupled partner fails for leader.
+        // Coupled primaries: primary is always placed; partner co-placement is best-effort.
         const leaderPartnerTeachers = new Map<number, Teacher>();
         const followerPartnerTeachers = new Map<number, Map<number, Teacher>>();
+        const coupledPartnerTeachers = new Map<number, Teacher>(); // pId → teacher (whole group)
         if (partnerIds.length > 0) {
           const usedPartnerIds = new Set<number>([teacher.id]);
 
-          // Helper: try to find all partner teachers for one class.
-          // Uses tentative reservation so usedPartnerIds is only updated on full success.
-          // Returns the map of pId→teacher on success, null on failure (any partner missing).
-          const resolvePartnersForClass = (targetClsId: number): Map<number, Teacher> | null => {
+          // ── Phase 1: coupled partner resolution (group level) ──────────────────
+          if (isCoupledSubject) {
+            for (const pId of partnerIds) {
+              const pSubj = subjects.find((s) => s.id === pId);
+              if (!pSubj || pSubj.coupled_class_ids.length === 0) continue; // uncoupled → Phase 2
+
+              const pGroupIds = pSubj.coupled_class_ids.filter((id) => !pSubj.excluded_class_ids.includes(id));
+              // All of the coupled partner's classes must be free at sk
+              if (pGroupIds.some((id) => classStates.get(id)?.slots.has(sk))) continue;
+              // Skip if every class in the group is already fully placed
+              if (!pGroupIds.some((id) => {
+                const a = assignments.find((x) => x.cls.id === id && x.subject.id === pId);
+                return a && a.remaining > 0;
+              })) continue;
+
+              const locked = classSubjectTeacher.get(`${cls.id}-${pId}`);
+              const pt = shuffle(teachers)
+                .sort((a, b) => teacherSubjectPriority(a, pId, cls.id) - teacherSubjectPriority(b, pId, cls.id))
+                .find((t) => {
+                  if (usedPartnerIds.has(t.id)) return false;
+                  if (locked !== undefined && t.id !== locked) return false;
+                  if (!canTeachSubject(t, pId)) return false;
+                  const ts = teacherStates.get(t.id)!;
+                  if (effectiveHours(t) <= ts.assignedHours) return false;
+                  if (!isTeacherAvailableOnDay(t, day)) return false;
+                  if (!isTeacherAvailableAtSlot(t, slot)) return false;
+                  return !ts.busySlots.has(sk);
+                });
+              if (pt) {
+                usedPartnerIds.add(pt.id);
+                coupledPartnerTeachers.set(pId, pt);
+              }
+              // Best-effort: coupled primary is placed even if no partner teacher found
+            }
+          }
+
+          // ── Phase 2: uncoupled partner resolution (per class) ──────────────────
+          // Helper: find all uncoupled-partner teachers for one class.
+          // Uses tentative reservation; usedPartnerIds committed only on full success.
+          const resolveUncoupledPartnersForClass = (targetClsId: number): Map<number, Teacher> | null => {
             const tentative = new Map<number, Teacher>();
             const tentativeIds: number[] = [];
             for (const pId of partnerIds) {
+              const pSubj = subjects.find((s) => s.id === pId);
+              // Coupled partners handled above; uncoupled subjects cannot drive coupled groups
+              if (pSubj && pSubj.coupled_class_ids.length > 0) continue;
               const pAss = assignments.find((a) => a.cls.id === targetClsId && a.subject.id === pId);
-              if (!pAss || pAss.remaining <= 0) continue; // already placed, no need to co-place
+              if (!pAss || pAss.remaining <= 0) continue; // already placed
               const locked = classSubjectTeacher.get(`${targetClsId}-${pId}`);
               const pt = shuffle(teachers)
                 .sort((a, b) => teacherSubjectPriority(a, pId, targetClsId) - teacherSubjectPriority(b, pId, targetClsId))
@@ -758,34 +870,31 @@ function _runScheduler(
                 tentative.set(pId, pt);
                 tentativeIds.push(pt.id);
               } else {
-                return null; // partner unavailable for this class → skip co-placement
+                return null; // partner unavailable for this class
               }
             }
-            // All partners found — commit reservations
             for (const id of tentativeIds) usedPartnerIds.add(id);
             return tentative;
           };
 
-          // Leader class
-          const leaderResult = resolvePartnersForClass(cls.id);
+          // Leader class (uncoupled partners)
+          const leaderResult = resolveUncoupledPartnersForClass(cls.id);
           if (leaderResult) {
             for (const [k, v] of leaderResult) leaderPartnerTeachers.set(k, v);
           } else if (!isCoupledSubject) {
             continue; // hard constraint: skip slot entirely
           }
-          // Coupled + no leader partners → primary placed alone, partners get independent pass
 
-          // Follower classes
+          // Follower classes (uncoupled partners)
           if (followerClasses.length > 0) {
             let followersOk = true;
             for (const { cls: fCls } of followerClasses) {
-              const fResult = resolvePartnersForClass(fCls.id);
+              const fResult = resolveUncoupledPartnersForClass(fCls.id);
               if (fResult) {
                 followerPartnerTeachers.set(fCls.id, fResult);
               } else if (!isCoupledSubject) {
                 followersOk = false; break;
               }
-              // Coupled + no follower partners for this class → this class gets primary alone
             }
             if (!isCoupledSubject && !followersOk) continue;
           }
@@ -833,6 +942,7 @@ function _runScheduler(
           targetState.slotsPerDay.set(day, (targetState.slotsPerDay.get(day) ?? 0) + 1);
           if (!ag) {
             targetState.nonAgSlotsPerDay.set(day, (targetState.nonAgSlotsPerDay.get(day) ?? 0) + 1);
+            targetState.nonAgSlots.add(sk);
           }
           targetState.hoursAssigned.set(subj.id, (targetState.hoursAssigned.get(subj.id) ?? 0) + 1);
           const sdKey = `${subj.id}-${day}`;
@@ -855,11 +965,31 @@ function _runScheduler(
           if (fAssignment) fAssignment.remaining--;
         }
 
-        // ── Place all partner subjects for leader + follower classes ──────────
+        // ── Place all partner subjects ────────────────────────────────────────
         if (partnerIds.length > 0) {
+          // Coupled partners: place for ALL of the partner's coupled classes with one teacher
+          for (const [pId, pTeacher] of coupledPartnerTeachers) {
+            const pSubj = subjects.find((s) => s.id === pId)!;
+            const pGroupIds = pSubj.coupled_class_ids.filter((id) => !pSubj.excluded_class_ids.includes(id));
+            let firstPlacement = true;
+            for (const cId of pGroupIds) {
+              const cCls = classes.find((c) => c.id === cId);
+              const cState = classStates.get(cId);
+              if (!cCls || !cState) continue;
+              const pAss = assignments.find((a) => a.cls.id === cId && a.subject.id === pId);
+              if (!pAss || pAss.remaining <= 0) continue; // already placed for this class
+              const pCsKey = `${cId}-${pId}`;
+              if (!classSubjectTeacher.has(pCsKey)) classSubjectTeacher.set(pCsKey, pTeacher.id);
+              recordPlacement(cCls, cState, pSubj, pTeacher, firstPlacement);
+              pAss.remaining--;
+              firstPlacement = false;
+            }
+          }
+
+          // Uncoupled partners: per-class placement (leader + each follower)
           for (const pId of partnerIds) {
             const partnerSubject = subjects.find((s) => s.id === pId);
-            if (!partnerSubject) continue;
+            if (!partnerSubject || partnerSubject.coupled_class_ids.length > 0) continue; // coupled handled above
 
             // Leader class
             const pTeacher = leaderPartnerTeachers.get(pId);
@@ -1057,7 +1187,10 @@ function _runScheduler(
     tState.busySlots.add(rSk);
     targetState.slots.add(rSk);
     targetState.slotsPerDay.set(rDay, (targetState.slotsPerDay.get(rDay) ?? 0) + 1);
-    if (!ag) targetState.nonAgSlotsPerDay.set(rDay, (targetState.nonAgSlotsPerDay.get(rDay) ?? 0) + 1);
+    if (!ag) {
+      targetState.nonAgSlotsPerDay.set(rDay, (targetState.nonAgSlotsPerDay.get(rDay) ?? 0) + 1);
+      targetState.nonAgSlots.add(rSk);
+    }
     targetState.hoursAssigned.set(subj.id, (targetState.hoursAssigned.get(subj.id) ?? 0) + 1);
     const sdKey = `${subj.id}-${rDay}`;
     if (!targetState.subjectDaySlots.has(sdKey)) targetState.subjectDaySlots.set(sdKey, new Set());
