@@ -180,9 +180,9 @@ export function generateTimetable(
   subjects: Subject[],
   gradeLevelConfigs: GradeLevelConfig[],
 ): SchedulerResult {
-  // Run up to 50 times with different random orderings; keep the best result.
+  // Run up to 1000 times with different random orderings; keep the best result.
   let best: SchedulerResult | null = null;
-  for (let attempt = 0; attempt < 50; attempt++) {
+  for (let attempt = 0; attempt < 1000; attempt++) {
     const result = _runScheduler(teachers, classes, subjects, gradeLevelConfigs);
     if (!best || result.warnings.length < best.warnings.length) best = result;
     if (best.warnings.length === 0) break;
@@ -376,6 +376,32 @@ function _runScheduler(
   [...classes]
     .sort((a, b) => a.grade_level !== b.grade_level ? a.grade_level - b.grade_level : a.name.localeCompare(b.name))
     .forEach((c, i) => classRank.set(c.id, i));
+
+  // ── Constrained-boundary day reservation ────────────────────────────────────
+  // Some teachers have very few available teaching days (e.g. Ka: only Thu+Fri).
+  // Their subjects are always must_be_boundary and are deferred to the end of the
+  // main loop. Without pre-emption, regular subjects can fill those days to max
+  // and leave no valid boundary position. This map records which (class, day) pairs
+  // must keep the last slot open until the class's boundary subjects are placed.
+  //
+  // A teacher is "constrained" if they have ≥ 3 free weekdays (≤ 2 working days).
+  const classBoundaryReservedDays = new Map<number, Set<Weekday>>();
+  for (const { cls, subject } of assignments) {
+    if (!subject.must_be_boundary || subject.coupled_class_ids.length > 0) continue;
+    if (isAgAssignment(subject, cls.grade_level)) continue;
+    const subjectAllowedDays = getSubjectAllowedDays(subject);
+    for (const teacher of teachers) {
+      if (!canTeachSubject(teacher, subject.id)) continue;
+      if (teacher.free_days.length < 3) continue; // ≥ 3 free days = ≤ 2 working days
+      const teacherAvailableDays = subjectAllowedDays.filter((d) =>
+        isTeacherAvailableOnDay(teacher, d),
+      );
+      if (teacherAvailableDays.length === 0) continue;
+      let reserved = classBoundaryReservedDays.get(cls.id);
+      if (!reserved) { reserved = new Set<Weekday>(); classBoundaryReservedDays.set(cls.id, reserved); }
+      for (const d of teacherAvailableDays) reserved.add(d);
+    }
+  }
 
   // ── Round-robin main scheduling loop ────────────────────────────────────────
   // Each outer iteration places at most ONE hour per assignment, cycling through
@@ -583,7 +609,21 @@ function _runScheduler(
 
         for (const day of orderedDays) {
           const totalDayCount = classState.slotsPerDay.get(day) ?? 0;
-          if (totalDayCount >= gradeMaxSlot) continue;
+          // On days reserved for a constrained teacher's boundary subject, cap one slot
+          // below max so the boundary slot is still available when the subject defers here.
+          const reservedDays = classBoundaryReservedDays.get(cls.id);
+          const boundaryStillPending =
+            reservedDays?.has(day) &&
+            assignments.some(
+              (a) =>
+                a.cls.id === cls.id &&
+                a.remaining > 0 &&
+                !isAgAssignment(a.subject, a.gradeLevel) &&
+                a.subject.must_be_boundary &&
+                a.subject.coupled_class_ids.length === 0,
+            );
+          const effectiveMax = boundaryStillPending ? gradeMaxSlot - 1 : gradeMaxSlot;
+          if (totalDayCount >= effectiveMax) continue;
 
           const sdKey = `${subject.id}-${day}`;
           const subjectSlotsOnDay = classState.subjectDaySlots.get(sdKey) ?? new Set<number>();
